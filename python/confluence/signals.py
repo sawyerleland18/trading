@@ -43,6 +43,14 @@ class ConfluenceParams:
     strong_sell_level: float = -70.0
     exit_long_score: float = 10.0
     exit_short_score: float = -10.0
+    # Signal trigger: "ema_cross_confluence" fires on the exact bar the
+    # chosen EMA pair crosses, gated by the confluence score already
+    # agreeing (>= emaConfirmScore in that direction). "score_threshold_cross"
+    # ignores EMA crossovers and fires purely when net_score crosses
+    # buy_threshold/sell_threshold. Must match the Pine script's `triggerMode`.
+    trigger_mode: str = "ema_cross_confluence"  # or "score_threshold_cross"
+    ema_cross_pair: str = "fast_mid"  # "fast_mid" | "fast_slow" | "mid_slow"
+    ema_confirm_score: float = 15.0
     # Risk
     atr_len: int = 14
     atr_mult_sl: float = 1.5
@@ -157,9 +165,31 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
         default="NEUTRAL",
     )
 
+    # ---- Signal trigger ----
+    pair_map = {
+        "fast_mid": ("ema_fast", "ema_mid"),
+        "fast_slow": ("ema_fast", "ema_slow"),
+        "mid_slow": ("ema_mid", "ema_slow"),
+    }
+    fast_col, slow_col = pair_map.get(p.ema_cross_pair, pair_map["fast_mid"])
+    a, b = out[fast_col], out[slow_col]
+    a_prev, b_prev = a.shift(1), b.shift(1)
+    ema_cross_up = (a_prev <= b_prev) & (a > b)
+    ema_cross_down = (a_prev >= b_prev) & (a < b)
+    out["ema_cross_up"] = ema_cross_up
+    out["ema_cross_down"] = ema_cross_down
+
     prev_score = out["net_score"].shift(1)
-    out["long_signal"] = (prev_score <= p.buy_threshold) & (out["net_score"] > p.buy_threshold)
-    out["short_signal"] = (prev_score >= p.sell_threshold) & (out["net_score"] < p.sell_threshold)
+    score_cross_long = (prev_score <= p.buy_threshold) & (out["net_score"] > p.buy_threshold)
+    score_cross_short = (prev_score >= p.sell_threshold) & (out["net_score"] < p.sell_threshold)
+
+    if p.trigger_mode == "ema_cross_confluence":
+        out["long_signal"] = ema_cross_up & (out["net_score"] >= p.ema_confirm_score)
+        out["short_signal"] = ema_cross_down & (out["net_score"] <= -p.ema_confirm_score)
+    else:
+        out["long_signal"] = score_cross_long
+        out["short_signal"] = score_cross_short
+
     out["exit_long_signal"] = out["net_score"] < p.exit_long_score
     out["exit_short_signal"] = out["net_score"] > p.exit_short_score
 

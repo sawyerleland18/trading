@@ -42,6 +42,28 @@ def test_uptrend_biases_score_positive(trending_ohlcv):
     assert out["long_signal"].sum() >= 1
 
 
+def test_ema_cross_columns_exist_and_are_mutually_exclusive(ohlcv):
+    out = compute_confluence(ohlcv)
+    assert {"ema_cross_up", "ema_cross_down"}.issubset(out.columns)
+    assert not (out["ema_cross_up"] & out["ema_cross_down"]).any()
+
+
+def test_ema_cross_confluence_signals_only_fire_on_the_crossover_bar(trending_ohlcv):
+    p = ConfluenceParams(trigger_mode="ema_cross_confluence")
+    out = compute_confluence(trending_ohlcv, p)
+    assert out["long_signal"].sum() >= 1
+    # every long signal must land exactly on an ema_cross_up bar
+    assert (out.loc[out["long_signal"], "ema_cross_up"]).all()
+
+
+def test_score_threshold_trigger_mode_ignores_ema_crossovers(trending_ohlcv):
+    p = ConfluenceParams(trigger_mode="score_threshold_cross")
+    out = compute_confluence(trending_ohlcv, p)
+    prev_score = out["net_score"].shift(1)
+    expected = (prev_score <= p.buy_threshold) & (out["net_score"] > p.buy_threshold)
+    assert (out["long_signal"] == expected.fillna(False)).all()
+
+
 def test_add_htf_filter_columns(ohlcv):
     out = add_htf_filter(ohlcv, rule="W")
     assert "htf_bullish" in out.columns and "htf_bearish" in out.columns

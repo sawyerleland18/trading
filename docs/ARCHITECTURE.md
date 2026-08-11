@@ -35,15 +35,32 @@ bottom and know exactly why the score is what it is on any given bar.
 
 ### Signal generation
 
-- **Long entry**: net score crosses **above** `buy_threshold` (default 40).
-- **Short entry**: net score crosses **below** `sell_threshold` (default -40).
+Entries are gated by a **trigger mode** (`trigger_mode` in Python /
+`Trigger Mode` input in Pine), so the BUY/SELL event lines up with what's
+visually obvious on the chart instead of firing on an invisible score
+threshold cross:
+
+- **`ema_cross_confluence` (default)** — a BUY/SELL fires on the exact bar
+  the chosen EMA pair crosses (`ema_cross_pair`: fast/mid by default,
+  fast/slow, or mid/slow), *gated* by the net score already agreeing with
+  that direction (`net_score >= ema_confirm_score` for longs, `<=
+  -ema_confirm_score` for shorts; default confirm level ±15). This is what
+  draws the BUY/SELL label directly on the candle where the crossover
+  happens on the TradingView chart.
+- **`score_threshold_cross`** — the older behavior: fires purely when the
+  net score itself crosses above `buy_threshold` (default 40) / below
+  `sell_threshold` (default -40), ignoring EMA crossovers entirely. Useful
+  if you want signals driven by the full multi-factor score rather than
+  tied to a specific EMA event.
+
 - **Exit**: whichever comes first — ATR-based stop-loss, ATR-based
   take-profit, or the score "fading" back through `exit_long_score` /
   `exit_short_score` (default ±10), which closes the trade early if the
   original thesis is no longer supported.
 - **Regime label**: `STRONG_BUY` / `BUY` / `NEUTRAL` / `SELL` / `STRONG_SELL`
   based on where the score sits relative to the strong/normal thresholds —
-  shown on the TradingView dashboard table.
+  shown on the TradingView dashboard table. This label reflects the score
+  at all times and is independent of which trigger mode is active.
 
 ### Multi-timeframe filter
 

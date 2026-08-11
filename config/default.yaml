@@ -38,6 +38,11 @@ signal_thresholds:
   exit_long_score: 10
   exit_short_score: -10
 
+signal_trigger:
+  trigger_mode: "ema_cross_confluence"  # or "score_threshold_cross"
+  ema_cross_pair: "fast_mid"            # "fast_mid" | "fast_slow" | "mid_slow"
+  ema_confirm_score: 15                 # min |net_score| required to accept the EMA crossover as a signal
+
 multi_timeframe:
   use_htf_filter: true
   htf: "240"       # Pine timeframe string (240 = 4H). Python mirror uses "W" (weekly) by default for daily data.

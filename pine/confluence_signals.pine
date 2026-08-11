@@ -53,6 +53,14 @@ strongSellLevel = input.int(-70, "Strong Sell Label Level", group = grpSig)
 exitLongScore   = input.int(10,  "Exit Long when score falls below",  group = grpSig)
 exitShortScore  = input.int(-10, "Exit Short when score rises above", group = grpSig)
 
+grpTrigger = "Signal Trigger"
+triggerMode   = input.string("EMA Crossover + Confluence", "Trigger Mode",
+     options = ["EMA Crossover + Confluence", "Confluence Score Threshold Only"], group = grpTrigger,
+     tooltip = "EMA Crossover + Confluence: BUY/SELL fires on the exact bar the chosen EMA pair crosses, as long as the confluence score already agrees. Confluence Score Threshold Only: ignores EMA crossovers and fires purely when the score crosses the Buy/Sell Threshold above.")
+emaCrossPair  = input.string("Fast/Mid", "EMA Crossover Pair", options = ["Fast/Mid", "Fast/Slow", "Mid/Slow"], group = grpTrigger)
+emaConfirmScore = input.int(15, "Min |Net Score| to Confirm EMA Crossover", minval = 0, group = grpTrigger,
+     tooltip = "Only used in EMA Crossover + Confluence mode. Keeps a crossover from firing a signal if the rest of the model strongly disagrees with it.")
+
 grpHTF = "Multi-Timeframe Filter"
 useHtfFilter = input.bool(true, "Require Higher-Timeframe Trend Alignment", group = grpHTF)
 htfTF        = input.timeframe("240", "Higher Timeframe", group = grpHTF)
@@ -133,8 +141,30 @@ htfBullish = htfEmaFast > htfEmaSlow
 htfBearish = htfEmaFast < htfEmaSlow
 
 // ------------------------------ SIGNAL LOGIC -----------------------------------
-longCondition  = ta.crossover(netScore, buyThreshold)   and (not useHtfFilter or htfBullish) and barstate.isconfirmed
-shortCondition = ta.crossunder(netScore, sellThreshold) and (not useHtfFilter or htfBearish) and barstate.isconfirmed
+// The BUY/SELL trigger event itself is tied to an EMA crossover (so the
+// label pops up right on the candle where the crossover happens, matching
+// what you'd see visually on the chart), gated by the confluence score
+// already agreeing with that direction. Flip triggerMode to fall back to
+// the older "score crosses its own threshold" behaviour.
+emaCrossUp = switch emaCrossPair
+    "Fast/Mid"  => ta.crossover(emaFast, emaMid)
+    "Fast/Slow" => ta.crossover(emaFast, emaSlow)
+    "Mid/Slow"  => ta.crossover(emaMid, emaSlow)
+    => ta.crossover(emaFast, emaMid)
+
+emaCrossDown = switch emaCrossPair
+    "Fast/Mid"  => ta.crossunder(emaFast, emaMid)
+    "Fast/Slow" => ta.crossunder(emaFast, emaSlow)
+    "Mid/Slow"  => ta.crossunder(emaMid, emaSlow)
+    => ta.crossunder(emaFast, emaMid)
+
+useEmaCrossTrigger = triggerMode == "EMA Crossover + Confluence"
+
+longTrigger  = useEmaCrossTrigger ? (emaCrossUp and netScore >= emaConfirmScore)    : ta.crossover(netScore, buyThreshold)
+shortTrigger = useEmaCrossTrigger ? (emaCrossDown and netScore <= -emaConfirmScore) : ta.crossunder(netScore, sellThreshold)
+
+longCondition  = longTrigger  and (not useHtfFilter or htfBullish) and barstate.isconfirmed
+shortCondition = shortTrigger and (not useHtfFilter or htfBearish) and barstate.isconfirmed
 
 longRiskDist  = atrVal * atrMultSL
 shortRiskDist = atrVal * atrMultSL

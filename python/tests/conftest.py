@@ -6,15 +6,30 @@ import pandas as pd
 import pytest
 
 
-def make_synthetic_ohlcv(n: int = 800, seed: int = 7, drift: float = 0.0004, vol: float = 0.015) -> pd.DataFrame:
-    """Deterministic synthetic daily OHLCV: a geometric random walk with drift.
+def make_synthetic_ohlcv(
+    n: int = 800,
+    seed: int = 7,
+    drift: float = 0.0004,
+    vol: float = 0.015,
+    cycle_amp: float = 0.0,
+    cycle_period: int = 40,
+) -> pd.DataFrame:
+    """Deterministic synthetic daily OHLCV: a geometric random walk with drift,
+    optionally with a sinusoidal cyclical component layered on top.
 
-    Good enough to exercise every code path (indicators, scoring, backtest
-    loop) without requiring network access to yfinance.
+    The cyclical component (`cycle_amp` > 0) produces repeated pullback/rally
+    swings on top of the drift, which is what actually generates EMA
+    crossover events — a pure monotonic drift never crosses back over its
+    own EMAs after the initial warmup, which isn't representative of real
+    price action. Good enough to exercise every code path (indicators,
+    scoring, backtest loop) without requiring network access to yfinance.
     """
     rng = np.random.default_rng(seed)
     dates = pd.bdate_range("2018-01-02", periods=n)
-    log_returns = rng.normal(drift, vol, size=n)
+    t = np.arange(n)
+    cyclical = cycle_amp * np.sin(2 * np.pi * t / cycle_period)
+    cyclical_returns = np.diff(np.concatenate([[0.0], cyclical]))
+    log_returns = rng.normal(drift, vol, size=n) + cyclical_returns
     close = 100 * np.exp(np.cumsum(log_returns))
 
     daily_range = np.abs(rng.normal(0, vol * 0.6, size=n)) * close
@@ -41,5 +56,7 @@ def ohlcv():
 
 @pytest.fixture
 def trending_ohlcv():
-    """Strong, low-noise uptrend — should reliably produce long signals."""
-    return make_synthetic_ohlcv(n=600, seed=3, drift=0.0025, vol=0.006)
+    """Net uptrend with cyclical pullback/rally swings — reliably produces
+    both real EMA crossover events and an overall positive score bias,
+    unlike a pure monotonic drift (which never re-crosses its own EMAs)."""
+    return make_synthetic_ohlcv(n=800, seed=11, drift=0.0006, vol=0.012, cycle_amp=0.02, cycle_period=40)
