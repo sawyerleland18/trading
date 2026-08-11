@@ -61,6 +61,21 @@ dollar/share amount: `qty = (equity * risk_per_trade_pct) / (ATR * atr_mult_sl)`
 That means every trade risks roughly the same fraction of the account
 regardless of how volatile the instrument is.
 
+Stop-loss and take-profit are **locked in at the moment of entry** (ATR at
+that bar × the configured multipliers) and held fixed for the life of the
+trade in both implementations — they do not recalculate every bar. Default
+multipliers are 1.5×ATR stop / 3×ATR target, a 2:1 reward-to-risk ratio, so
+the strategy only needs to win roughly 1 in 3 trades to break even before
+costs. Tighten/widen via the `atr_mult_sl` / `atr_mult_tp` inputs (Pine) or
+`ConfluenceParams.atr_mult_sl` / `atr_mult_tp` (Python) — keep the ratio
+between them in mind, since that ratio, not just the win rate, is what
+determines whether the strategy is profitable overall.
+
+On the Pine chart, every BUY/SELL signal draws a label with the exact
+entry, stop-loss, and take-profit prices, and the current trade's stop/target
+levels are plotted as live horizontal lines on the candles (and echoed in
+the dashboard table) for as long as the position stays open.
+
 ## Repository layout
 
 ```

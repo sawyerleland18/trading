@@ -136,36 +136,63 @@ htfBearish = htfEmaFast < htfEmaSlow
 longCondition  = ta.crossover(netScore, buyThreshold)   and (not useHtfFilter or htfBullish) and barstate.isconfirmed
 shortCondition = ta.crossunder(netScore, sellThreshold) and (not useHtfFilter or htfBearish) and barstate.isconfirmed
 
-longStop  = close - atrVal * atrMultSL
-shortStop = close + atrVal * atrMultSL
 longRiskDist  = atrVal * atrMultSL
 shortRiskDist = atrVal * atrMultSL
 longQty  = longRiskDist  > 0 ? (strategy.equity * riskPerTrade / 100) / longRiskDist  : 0.0
 shortQty = shortRiskDist > 0 ? (strategy.equity * riskPerTrade / 100) / shortRiskDist : 0.0
 
+// Stop-loss / take-profit are locked in at the moment of entry (based on ATR
+// *at that bar*) and held fixed until the trade closes — they do NOT
+// recalculate every bar. This is what you'd actually place as resting
+// stop/limit orders with your broker.
+var float longSL  = na
+var float longTP  = na
+var float shortSL = na
+var float shortTP = na
+
 if enableLong and longCondition and strategy.position_size <= 0
     if strategy.position_size < 0
         strategy.close("Short", comment = "Flip to Long")
     strategy.entry("Long", strategy.long, qty = longQty)
-    alert("BUY " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | price=" + str.tostring(close), alert.freq_once_per_bar)
+    longSL := close - atrVal * atrMultSL
+    longTP := close + atrVal * atrMultTP
+    label.new(bar_index, low, text = "BUY\nEntry " + str.tostring(close, format.mintick) +
+         "\nSL " + str.tostring(longSL, format.mintick) + "\nTP " + str.tostring(longTP, format.mintick),
+         style = label.style_label_up, color = color.new(color.green, 10), textcolor = color.white,
+         size = size.small, yloc = yloc.belowbar)
+    alert("BUY " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | entry=" + str.tostring(close) +
+         " | stop=" + str.tostring(longSL) + " | target=" + str.tostring(longTP), alert.freq_once_per_bar)
 
 if enableShort and shortCondition and strategy.position_size >= 0
     if strategy.position_size > 0
         strategy.close("Long", comment = "Flip to Short")
     strategy.entry("Short", strategy.short, qty = shortQty)
-    alert("SELL " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | price=" + str.tostring(close), alert.freq_once_per_bar)
+    shortSL := close + atrVal * atrMultSL
+    shortTP := close - atrVal * atrMultTP
+    label.new(bar_index, high, text = "SELL\nEntry " + str.tostring(close, format.mintick) +
+         "\nSL " + str.tostring(shortSL, format.mintick) + "\nTP " + str.tostring(shortTP, format.mintick),
+         style = label.style_label_down, color = color.new(color.red, 10), textcolor = color.white,
+         size = size.small, yloc = yloc.abovebar)
+    alert("SELL " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | entry=" + str.tostring(close) +
+         " | stop=" + str.tostring(shortSL) + " | target=" + str.tostring(shortTP), alert.freq_once_per_bar)
 
 if strategy.position_size > 0
-    avgPrice = strategy.position_avg_price
-    strategy.exit("Long Exit", "Long", stop = avgPrice - atrVal * atrMultSL, limit = avgPrice + atrVal * atrMultTP)
+    strategy.exit("Long Exit", "Long", stop = longSL, limit = longTP)
     if netScore < exitLongScore and barstate.isconfirmed
         strategy.close("Long", comment = "Score Fade")
 
 if strategy.position_size < 0
-    avgPrice = strategy.position_avg_price
-    strategy.exit("Short Exit", "Short", stop = avgPrice + atrVal * atrMultSL, limit = avgPrice - atrVal * atrMultTP)
+    strategy.exit("Short Exit", "Short", stop = shortSL, limit = shortTP)
     if netScore > exitShortScore and barstate.isconfirmed
         strategy.close("Short", comment = "Score Fade")
+
+// Plotted SL/TP series: only visible while a position is actually open —
+// derived from position_size rather than clearing longSL/shortSL directly,
+// so the fixed levels stay intact for strategy.exit() on the fill bar
+// (entries fill on the *next* bar, so position_size is still 0 on the
+// signal bar itself).
+slPlotSeries = strategy.position_size > 0 ? longSL : strategy.position_size < 0 ? shortSL : na
+tpPlotSeries = strategy.position_size > 0 ? longTP : strategy.position_size < 0 ? shortTP : na
 
 // -------------------------------- PLOTTING --------------------------------------
 plot(emaFast, "EMA Fast", color = color.new(color.aqua, 0), linewidth = 1)
@@ -176,8 +203,14 @@ bbUpperPlot = plot(showBB ? bbUpper : na, "BB Upper", color = color.new(color.gr
 bbLowerPlot = plot(showBB ? bbLower : na, "BB Lower", color = color.new(color.gray, 60))
 fill(bbUpperPlot, bbLowerPlot, color = color.new(color.gray, 92))
 
-plotshape(longCondition,  title = "Buy Signal",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.lime, 0),  size = size.small, text = "BUY")
-plotshape(shortCondition, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small, text = "SELL")
+plotshape(longCondition,  title = "Buy Signal",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.lime, 0),  size = size.small)
+plotshape(shortCondition, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small)
+
+// Stop-loss / take-profit levels for the currently open trade, drawn as
+// horizontal lines directly on the price chart — this is where to place
+// your actual stop and limit orders. Lines disappear once the trade closes.
+plot(slPlotSeries, title = "Stop Loss Level",   color = color.new(color.red, 0),   style = plot.style_linebr, linewidth = 2)
+plot(tpPlotSeries, title = "Take Profit Level", color = color.new(color.green, 0), style = plot.style_linebr, linewidth = 2)
 
 bgColor = netScore >= strongBuyLevel ? color.new(color.lime, 88) :
      netScore >= buyThreshold ? color.new(color.green, 92) :
@@ -190,7 +223,7 @@ alertcondition(longCondition,  title = "CSS Buy Signal",  message = "Confluence 
 alertcondition(shortCondition, title = "CSS Sell Signal", message = "Confluence Signal System: SELL {{ticker}} at {{close}}")
 
 // ---------------------------------- DASHBOARD --------------------------------------
-var table dash = table.new(position.top_right, 2, 8, bgcolor = color.new(color.black, 20), border_width = 1)
+var table dash = table.new(position.top_right, 2, 11, bgcolor = color.new(color.black, 20), border_width = 1)
 
 regime() =>
     netScore >= strongBuyLevel ? "STRONG BUY" :
@@ -200,6 +233,9 @@ regime() =>
 
 regimeColor() =>
     netScore >= buyThreshold ? color.lime : netScore <= sellThreshold ? color.red : color.silver
+
+positionLabel() =>
+    strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
 
 if showDashboard and barstate.islast
     table.cell(dash, 0, 0, "Confluence Signal System", text_color = color.white, bgcolor = color.new(color.blue, 30))
@@ -218,3 +254,9 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 6, str.tostring(volaPts, "#.0"))
     table.cell(dash, 0, 7, "Mean-Rev (±15)")
     table.cell(dash, 1, 7, str.tostring(bbPts, "#.0"))
+    table.cell(dash, 0, 8, "Position")
+    table.cell(dash, 1, 8, positionLabel(), text_color = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver)
+    table.cell(dash, 0, 9, "Stop Loss")
+    table.cell(dash, 1, 9, na(slPlotSeries) ? "—" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
+    table.cell(dash, 0, 10, "Take Profit")
+    table.cell(dash, 1, 10, na(tpPlotSeries) ? "—" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)
