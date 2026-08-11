@@ -1,0 +1,225 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © confluence-signal-system
+//@version=5
+
+// =============================================================================
+// CONFLUENCE SIGNAL SYSTEM — Multi-Factor Buy/Sell Engine
+// -----------------------------------------------------------------------------
+// A rule-based, explainable "net score" (-100..+100) built from five weighted
+// factor groups (Trend, Momentum, Volume, Volatility Regime, Mean-Reversion).
+// Crossing the score above/below configurable thresholds generates buy/sell
+// signals, drives an optional strategy backtest (Strategy Tester stats,
+// equity curve, win rate, profit factor), and fires alerts (both classic
+// alertcondition() and dynamic alert() calls suitable for webhook bots).
+//
+// This script is mirrored 1:1 (same weights, same rules) by the Python
+// package in python/confluence/ so the exact same logic can be backtested
+// across hundreds of tickers and years of history outside TradingView.
+// See docs/ARCHITECTURE.md for the full scoring breakdown.
+// =============================================================================
+
+strategy("Confluence Signal System — Buy/Sell Engine", shorttitle = "CSS",
+     overlay = true, initial_capital = 10000,
+     default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     slippage = 1, pyramiding = 0, calc_on_every_tick = false,
+     max_bars_back = 500)
+
+// ------------------------------- INPUTS -------------------------------------
+grpTrend = "Trend (weight 25)"
+emaFastLen  = input.int(20,  "Fast EMA",   minval = 2, group = grpTrend)
+emaMidLen   = input.int(50,  "Mid EMA",    minval = 2, group = grpTrend)
+emaSlowLen  = input.int(200, "Slow EMA",   minval = 2, group = grpTrend)
+
+grpMom = "Momentum (weight 25)"
+rsiLen      = input.int(14, "RSI Length", minval = 2, group = grpMom)
+macdFast    = input.int(12, "MACD Fast",  group = grpMom)
+macdSlow    = input.int(26, "MACD Slow",  group = grpMom)
+macdSignal  = input.int(9,  "MACD Signal", group = grpMom)
+
+grpVol = "Volume (weight 20)"
+obvLookback = input.int(5,  "OBV Rising Lookback", minval = 1, group = grpVol)
+relVolLen   = input.int(20, "Relative Volume SMA", minval = 2, group = grpVol)
+relVolMult  = input.float(1.2, "Relative Volume Spike Multiplier", minval = 1.0, step = 0.1, group = grpVol)
+
+grpVola = "Volatility Regime — ADX (weight 15)"
+adxLen      = input.int(14, "ADX/DI Length", minval = 2, group = grpVola)
+adxThresh   = input.float(20, "ADX Trending Threshold", minval = 5, group = grpVola)
+
+grpBB = "Mean-Reversion — Bollinger (weight 15)"
+bbLen       = input.int(20, "BB Length", minval = 5, group = grpBB)
+bbMult      = input.float(2.0, "BB StdDev Mult", minval = 0.5, step = 0.1, group = grpBB)
+
+grpSig = "Signal Thresholds"
+buyThreshold    = input.int(40,  "Buy Threshold",          group = grpSig)
+sellThreshold   = input.int(-40, "Sell Threshold",         group = grpSig)
+strongBuyLevel  = input.int(70,  "Strong Buy Label Level", group = grpSig)
+strongSellLevel = input.int(-70, "Strong Sell Label Level", group = grpSig)
+exitLongScore   = input.int(10,  "Exit Long when score falls below",  group = grpSig)
+exitShortScore  = input.int(-10, "Exit Short when score rises above", group = grpSig)
+
+grpHTF = "Multi-Timeframe Filter"
+useHtfFilter = input.bool(true, "Require Higher-Timeframe Trend Alignment", group = grpHTF)
+htfTF        = input.timeframe("240", "Higher Timeframe", group = grpHTF)
+
+grpRisk = "Risk Management"
+enableLong    = input.bool(true, "Enable Long Trades",  group = grpRisk)
+enableShort   = input.bool(true, "Enable Short Trades", group = grpRisk)
+atrLen        = input.int(14, "ATR Length", minval = 2, group = grpRisk)
+atrMultSL     = input.float(1.5, "ATR Stop-Loss Multiplier",   minval = 0.5, step = 0.1, group = grpRisk)
+atrMultTP     = input.float(3.0, "ATR Take-Profit Multiplier", minval = 0.5, step = 0.1, group = grpRisk)
+riskPerTrade  = input.float(1.0, "Risk per Trade (% of equity)", minval = 0.1, step = 0.1, group = grpRisk)
+
+grpUI = "Display"
+showDashboard = input.bool(true, "Show Score Dashboard", group = grpUI)
+showBB        = input.bool(true, "Show Bollinger Bands", group = grpUI)
+
+// ------------------------------- CORE SERIES ---------------------------------
+emaFast = ta.ema(close, emaFastLen)
+emaMid  = ta.ema(close, emaMidLen)
+emaSlow = ta.ema(close, emaSlowLen)
+
+rsi = ta.rsi(close, rsiLen)
+[macdLine, macdSig, macdHist] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+obv = ta.obv
+volSma = ta.sma(volume, relVolLen)
+
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+
+bbMid = ta.sma(close, bbLen)
+bbDev = ta.stdev(close, bbLen)
+bbUpper = bbMid + bbMult * bbDev
+bbLower = bbMid - bbMult * bbDev
+bbWidth = (bbUpper - bbLower) / bbMid
+
+atrVal = ta.atr(atrLen)
+
+// --------------------------- FACTOR 1: TREND (±25) ---------------------------
+trendPts = 0.0
+trendPts += close > emaFast ? 6 : -6
+trendPts += emaFast > emaMid ? 6 : -6
+trendPts += emaMid > emaSlow ? 7 : -7
+trendPts += close > emaSlow ? 6 : -6
+
+// -------------------------- FACTOR 2: MOMENTUM (±25) --------------------------
+momentumPts = 0.0
+momentumPts += rsi > 50 ? 6 : -6
+momentumPts += rsi > rsi[1] ? 4 : -4
+momentumPts += macdLine > macdSig ? 8 : -8
+momentumPts += macdHist > macdHist[1] ? 7 : -7
+
+// --------------------------- FACTOR 3: VOLUME (±20) ---------------------------
+volumePts = 0.0
+volumePts += obv > obv[obvLookback] ? 10 : -10
+relVolSpike = volume > volSma * relVolMult
+volumePts += relVolSpike ? (close > open ? 10 : close < open ? -10 : 0) : 0
+
+// ----------------------- FACTOR 4: VOLATILITY REGIME (±15) --------------------
+trending = adx > adxThresh
+volaPts = 0.0
+volaPts += trending ? (diPlus > diMinus ? 15 : -15) : 0.0
+
+// ----------------------- FACTOR 5: MEAN-REVERSION / BB (±15) ------------------
+bbPts = 0.0
+breakoutUp   = close > bbUpper and bbWidth > bbWidth[1]
+breakoutDown = close < bbLower and bbWidth > bbWidth[1]
+bouncePotentialUp   = close <= bbLower and rsi < 30
+bouncePotentialDown = close >= bbUpper and rsi > 70
+bbPts += breakoutUp ? 15 : breakoutDown ? -15 : bouncePotentialUp ? 7 : bouncePotentialDown ? -7 : 0.0
+
+// ------------------------------ NET SCORE -------------------------------------
+netScore = trendPts + momentumPts + volumePts + volaPts + bbPts
+
+// ---------------------------- MULTI-TIMEFRAME FILTER --------------------------
+[htfEmaFast, htfEmaSlow] = request.security(syminfo.tickerid, htfTF,
+     [ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen)], lookahead = barmerge.lookahead_off)
+htfBullish = htfEmaFast > htfEmaSlow
+htfBearish = htfEmaFast < htfEmaSlow
+
+// ------------------------------ SIGNAL LOGIC -----------------------------------
+longCondition  = ta.crossover(netScore, buyThreshold)   and (not useHtfFilter or htfBullish) and barstate.isconfirmed
+shortCondition = ta.crossunder(netScore, sellThreshold) and (not useHtfFilter or htfBearish) and barstate.isconfirmed
+
+longStop  = close - atrVal * atrMultSL
+shortStop = close + atrVal * atrMultSL
+longRiskDist  = atrVal * atrMultSL
+shortRiskDist = atrVal * atrMultSL
+longQty  = longRiskDist  > 0 ? (strategy.equity * riskPerTrade / 100) / longRiskDist  : 0.0
+shortQty = shortRiskDist > 0 ? (strategy.equity * riskPerTrade / 100) / shortRiskDist : 0.0
+
+if enableLong and longCondition and strategy.position_size <= 0
+    if strategy.position_size < 0
+        strategy.close("Short", comment = "Flip to Long")
+    strategy.entry("Long", strategy.long, qty = longQty)
+    alert("BUY " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | price=" + str.tostring(close), alert.freq_once_per_bar)
+
+if enableShort and shortCondition and strategy.position_size >= 0
+    if strategy.position_size > 0
+        strategy.close("Long", comment = "Flip to Short")
+    strategy.entry("Short", strategy.short, qty = shortQty)
+    alert("SELL " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | price=" + str.tostring(close), alert.freq_once_per_bar)
+
+if strategy.position_size > 0
+    avgPrice = strategy.position_avg_price
+    strategy.exit("Long Exit", "Long", stop = avgPrice - atrVal * atrMultSL, limit = avgPrice + atrVal * atrMultTP)
+    if netScore < exitLongScore and barstate.isconfirmed
+        strategy.close("Long", comment = "Score Fade")
+
+if strategy.position_size < 0
+    avgPrice = strategy.position_avg_price
+    strategy.exit("Short Exit", "Short", stop = avgPrice + atrVal * atrMultSL, limit = avgPrice - atrVal * atrMultTP)
+    if netScore > exitShortScore and barstate.isconfirmed
+        strategy.close("Short", comment = "Score Fade")
+
+// -------------------------------- PLOTTING --------------------------------------
+plot(emaFast, "EMA Fast", color = color.new(color.aqua, 0), linewidth = 1)
+plot(emaMid,  "EMA Mid",  color = color.new(color.orange, 0), linewidth = 1)
+plot(emaSlow, "EMA Slow", color = color.new(color.purple, 0), linewidth = 2)
+
+bbUpperPlot = plot(showBB ? bbUpper : na, "BB Upper", color = color.new(color.gray, 60))
+bbLowerPlot = plot(showBB ? bbLower : na, "BB Lower", color = color.new(color.gray, 60))
+fill(bbUpperPlot, bbLowerPlot, color = color.new(color.gray, 92))
+
+plotshape(longCondition,  title = "Buy Signal",  style = shape.triangleup,   location = location.belowbar, color = color.new(color.lime, 0),  size = size.small, text = "BUY")
+plotshape(shortCondition, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small, text = "SELL")
+
+bgColor = netScore >= strongBuyLevel ? color.new(color.lime, 88) :
+     netScore >= buyThreshold ? color.new(color.green, 92) :
+     netScore <= strongSellLevel ? color.new(color.red, 88) :
+     netScore <= sellThreshold ? color.new(color.maroon, 92) : na
+bgcolor(bgColor)
+
+// ------------------------------- ALERTCONDITIONS ----------------------------------
+alertcondition(longCondition,  title = "CSS Buy Signal",  message = "Confluence Signal System: BUY {{ticker}} at {{close}}")
+alertcondition(shortCondition, title = "CSS Sell Signal", message = "Confluence Signal System: SELL {{ticker}} at {{close}}")
+
+// ---------------------------------- DASHBOARD --------------------------------------
+var table dash = table.new(position.top_right, 2, 8, bgcolor = color.new(color.black, 20), border_width = 1)
+
+regime() =>
+    netScore >= strongBuyLevel ? "STRONG BUY" :
+     netScore >= buyThreshold ? "BUY" :
+     netScore <= strongSellLevel ? "STRONG SELL" :
+     netScore <= sellThreshold ? "SELL" : "NEUTRAL"
+
+regimeColor() =>
+    netScore >= buyThreshold ? color.lime : netScore <= sellThreshold ? color.red : color.silver
+
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "Confluence Signal System", text_color = color.white, bgcolor = color.new(color.blue, 30))
+    table.cell(dash, 1, 0, "", bgcolor = color.new(color.blue, 30))
+    table.cell(dash, 0, 1, "Net Score")
+    table.cell(dash, 1, 1, str.tostring(netScore, "#.0"), text_color = regimeColor())
+    table.cell(dash, 0, 2, "Regime")
+    table.cell(dash, 1, 2, regime(), text_color = regimeColor())
+    table.cell(dash, 0, 3, "Trend (±25)")
+    table.cell(dash, 1, 3, str.tostring(trendPts, "#.0"))
+    table.cell(dash, 0, 4, "Momentum (±25)")
+    table.cell(dash, 1, 4, str.tostring(momentumPts, "#.0"))
+    table.cell(dash, 0, 5, "Volume (±20)")
+    table.cell(dash, 1, 5, str.tostring(volumePts, "#.0"))
+    table.cell(dash, 0, 6, "Volatility (±15)")
+    table.cell(dash, 1, 6, str.tostring(volaPts, "#.0"))
+    table.cell(dash, 0, 7, "Mean-Rev (±15)")
+    table.cell(dash, 1, 7, str.tostring(bbPts, "#.0"))

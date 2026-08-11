@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local data cache / personal watchlist
+python/data_cache/
+config/watchlist.txt
+
+# Backtest outputs
+python/*.csv
+python/**/*.csv
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,15 @@
+# Example watchlist for `python -m confluence.cli scan --watchlist ...`
+# One ticker per line. Lines starting with # are ignored.
+# Copy this file to watchlist.txt and edit freely — that file is gitignored
+# so your personal watchlist doesn't need to live in version control.
+
+SPY
+QQQ
+AAPL
+MSFT
+NVDA
+AMZN
+GOOGL
+META
+TSLA
+AMD

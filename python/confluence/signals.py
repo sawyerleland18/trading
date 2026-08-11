@@ -1,0 +1,194 @@
+"""Confluence scoring model — the Python mirror of pine/confluence_signals.pine.
+
+The five weighted factor groups and their point values are kept identical
+to the Pine script on purpose. If you change a weight or a rule in one
+place, change it in the other — see docs/ARCHITECTURE.md for the full
+breakdown table that both implementations must agree with.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from . import indicators as ind
+
+
+@dataclass
+class ConfluenceParams:
+    # Trend
+    ema_fast: int = 20
+    ema_mid: int = 50
+    ema_slow: int = 200
+    # Momentum
+    rsi_len: int = 14
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    # Volume
+    obv_lookback: int = 5
+    rel_vol_len: int = 20
+    rel_vol_mult: float = 1.2
+    # Volatility regime
+    adx_len: int = 14
+    adx_thresh: float = 20.0
+    # Mean reversion / Bollinger
+    bb_len: int = 20
+    bb_mult: float = 2.0
+    # Signal thresholds
+    buy_threshold: float = 40.0
+    sell_threshold: float = -40.0
+    strong_buy_level: float = 70.0
+    strong_sell_level: float = -70.0
+    exit_long_score: float = 10.0
+    exit_short_score: float = -10.0
+    # Risk
+    atr_len: int = 14
+    atr_mult_sl: float = 1.5
+    atr_mult_tp: float = 3.0
+    risk_per_trade_pct: float = 1.0
+
+
+REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
+
+
+def _validate(df: pd.DataFrame) -> None:
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame is missing required columns: {missing}")
+
+
+def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None) -> pd.DataFrame:
+    """Compute all factor scores + net_score + long/short signal columns.
+
+    Parameters
+    ----------
+    df : DataFrame with columns open, high, low, close, volume (indexed by datetime).
+    params : ConfluenceParams, uses defaults (matching the Pine script defaults) if None.
+
+    Returns
+    -------
+    A copy of df with the following columns appended:
+        ema_fast, ema_mid, ema_slow, rsi, macd_line, macd_signal, macd_hist,
+        obv, rel_vol_sma, plus_di, minus_di, adx, bb_mid, bb_upper, bb_lower, bb_width,
+        atr, trend_pts, momentum_pts, volume_pts, vola_pts, bb_pts, net_score,
+        regime, long_signal, short_signal
+    """
+    _validate(df)
+    p = params or ConfluenceParams()
+    out = df.copy()
+
+    close, high, low, volume, open_ = out["close"], out["high"], out["low"], out["volume"], out["open"]
+
+    out["ema_fast"] = ind.ema(close, p.ema_fast)
+    out["ema_mid"] = ind.ema(close, p.ema_mid)
+    out["ema_slow"] = ind.ema(close, p.ema_slow)
+
+    out["rsi"] = ind.rsi(close, p.rsi_len)
+    macd_line, macd_signal, macd_hist = ind.macd(close, p.macd_fast, p.macd_slow, p.macd_signal)
+    out["macd_line"], out["macd_signal"], out["macd_hist"] = macd_line, macd_signal, macd_hist
+
+    out["obv"] = ind.obv(close, volume)
+    out["rel_vol_sma"] = ind.sma(volume, p.rel_vol_len)
+
+    plus_di, minus_di, adx = ind.dmi(high, low, close, p.adx_len)
+    out["plus_di"], out["minus_di"], out["adx"] = plus_di, minus_di, adx
+
+    bb_mid, bb_upper, bb_lower, bb_width = ind.bollinger_bands(close, p.bb_len, p.bb_mult)
+    out["bb_mid"], out["bb_upper"], out["bb_lower"], out["bb_width"] = bb_mid, bb_upper, bb_lower, bb_width
+
+    out["atr"] = ind.atr(high, low, close, p.atr_len)
+
+    # ---- Factor 1: Trend (+-25) ----
+    trend_pts = (
+        np.where(close > out["ema_fast"], 6, -6)
+        + np.where(out["ema_fast"] > out["ema_mid"], 6, -6)
+        + np.where(out["ema_mid"] > out["ema_slow"], 7, -7)
+        + np.where(close > out["ema_slow"], 6, -6)
+    )
+    out["trend_pts"] = trend_pts.astype(float)
+
+    # ---- Factor 2: Momentum (+-25) ----
+    momentum_pts = (
+        np.where(out["rsi"] > 50, 6, -6)
+        + np.where(out["rsi"] > out["rsi"].shift(1), 4, -4)
+        + np.where(out["macd_line"] > out["macd_signal"], 8, -8)
+        + np.where(out["macd_hist"] > out["macd_hist"].shift(1), 7, -7)
+    )
+    out["momentum_pts"] = momentum_pts.astype(float)
+
+    # ---- Factor 3: Volume (+-20) ----
+    obv_rising = out["obv"] > out["obv"].shift(p.obv_lookback)
+    rel_vol_spike = volume > (out["rel_vol_sma"] * p.rel_vol_mult)
+    vol_direction = np.where(close > open_, 10, np.where(close < open_, -10, 0))
+    volume_pts = np.where(obv_rising, 10, -10) + np.where(rel_vol_spike, vol_direction, 0)
+    out["volume_pts"] = volume_pts.astype(float)
+
+    # ---- Factor 4: Volatility regime via ADX (+-15) ----
+    trending = out["adx"] > p.adx_thresh
+    vola_pts = np.where(trending, np.where(out["plus_di"] > out["minus_di"], 15, -15), 0)
+    out["vola_pts"] = vola_pts.astype(float)
+
+    # ---- Factor 5: Mean-reversion / Bollinger (+-15) ----
+    breakout_up = (close > out["bb_upper"]) & (out["bb_width"] > out["bb_width"].shift(1))
+    breakout_down = (close < out["bb_lower"]) & (out["bb_width"] > out["bb_width"].shift(1))
+    bounce_up = (close <= out["bb_lower"]) & (out["rsi"] < 30)
+    bounce_down = (close >= out["bb_upper"]) & (out["rsi"] > 70)
+    bb_pts = np.select(
+        [breakout_up, breakout_down, bounce_up, bounce_down],
+        [15, -15, 7, -7],
+        default=0,
+    )
+    out["bb_pts"] = bb_pts.astype(float)
+
+    out["net_score"] = (
+        out["trend_pts"] + out["momentum_pts"] + out["volume_pts"] + out["vola_pts"] + out["bb_pts"]
+    )
+
+    out["regime"] = np.select(
+        [
+            out["net_score"] >= p.strong_buy_level,
+            out["net_score"] >= p.buy_threshold,
+            out["net_score"] <= p.strong_sell_level,
+            out["net_score"] <= p.sell_threshold,
+        ],
+        ["STRONG_BUY", "BUY", "STRONG_SELL", "SELL"],
+        default="NEUTRAL",
+    )
+
+    prev_score = out["net_score"].shift(1)
+    out["long_signal"] = (prev_score <= p.buy_threshold) & (out["net_score"] > p.buy_threshold)
+    out["short_signal"] = (prev_score >= p.sell_threshold) & (out["net_score"] < p.sell_threshold)
+    out["exit_long_signal"] = out["net_score"] < p.exit_long_score
+    out["exit_short_signal"] = out["net_score"] > p.exit_short_score
+
+    return out
+
+
+def add_htf_filter(
+    df: pd.DataFrame, rule: str = "W", ema_fast: int = 20, ema_slow: int = 50
+) -> pd.DataFrame:
+    """Approximate the Pine script's request.security() multi-timeframe filter.
+
+    Resamples close price to a higher timeframe (`rule`, e.g. "W" for weekly
+    on daily data, or "4H" on intraday data), computes the EMA-fast/EMA-slow
+    trend on that timeframe, and forward-fills it back onto the original
+    index. The higher-timeframe trend is shifted by one completed bar before
+    filling so a signal never sees a still-forming higher-timeframe candle
+    (no lookahead bias) — the same guarantee `barmerge.lookahead_off` gives
+    the Pine script.
+
+    Adds columns: htf_bullish, htf_bearish (bool).
+    """
+    out = df.copy()
+    htf = out[["close"]].resample(rule).last().dropna()
+    htf_ema_fast = ind.ema(htf["close"], ema_fast)
+    htf_ema_slow = ind.ema(htf["close"], ema_slow)
+    htf_bullish = (htf_ema_fast > htf_ema_slow).shift(1)
+
+    aligned = htf_bullish.reindex(out.index, method="ffill")
+    known = aligned.notna()
+    out["htf_bullish"] = (aligned.fillna(False)) & known
+    out["htf_bearish"] = (~aligned.fillna(True)) & known
+    return out

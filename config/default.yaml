@@ -1,0 +1,49 @@
+# Canonical default parameters for the Confluence Signal System.
+#
+# This file is the human-readable source of truth for default values.
+# pine/confluence_signals.pine input defaults and python/confluence/signals.py
+# ConfluenceParams defaults are kept in sync with this file by hand — if you
+# change a value here, update both implementations to match, then update
+# this file's comment noting the change (see docs/ARCHITECTURE.md).
+
+trend:
+  ema_fast: 20
+  ema_mid: 50
+  ema_slow: 200
+
+momentum:
+  rsi_len: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+
+volume:
+  obv_lookback: 5
+  rel_vol_len: 20
+  rel_vol_mult: 1.2
+
+volatility_regime:
+  adx_len: 14
+  adx_thresh: 20
+
+mean_reversion:
+  bb_len: 20
+  bb_mult: 2.0
+
+signal_thresholds:
+  buy_threshold: 40
+  sell_threshold: -40
+  strong_buy_level: 70
+  strong_sell_level: -70
+  exit_long_score: 10
+  exit_short_score: -10
+
+multi_timeframe:
+  use_htf_filter: true
+  htf: "240"       # Pine timeframe string (240 = 4H). Python mirror uses "W" (weekly) by default for daily data.
+
+risk:
+  atr_len: 14
+  atr_mult_sl: 1.5
+  atr_mult_tp: 3.0
+  risk_per_trade_pct: 1.0
