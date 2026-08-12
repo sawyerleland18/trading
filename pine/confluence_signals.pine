@@ -61,12 +61,9 @@ bbLen       = input.int(20, "BB Length", minval = 5, group = grpBB)
 bbMult      = input.float(2.0, "BB StdDev Mult", minval = 0.5, step = 0.1, group = grpBB)
 
 grpLT = "Long-Term Regime - SMA200 Timing + 12-1mo Momentum (weight 25)"
-ltSmaLen      = input.int(200, "Long-Term SMA Length", minval = 20, group = grpLT,
-     tooltip = "Faber (2007/2013) tactical asset allocation: price above/below its long-term SMA, tested back to 1901 across US equities, foreign equities, bonds, commodities and REITs.")
-momLookbackBars = input.int(252, "Momentum Lookback (bars, ~12 months)", minval = 20, group = grpLT,
-     tooltip = "Jegadeesh & Titman (1993); Moskowitz, Ooi & Pedersen (2012) 'Time Series Momentum': trailing 12-month return predicts the next period's direction, replicated across 58 futures markets, 8 asset classes, and (Geczy & Samonov 2016) 212 years of data.")
-momSkipBars     = input.int(21, "Momentum Skip-Recent (bars, ~1 month)", minval = 0, group = grpLT,
-     tooltip = "Skips the most recent ~month before measuring momentum, the standard '12-1' construction that avoids short-term mean-reversion contaminating the signal.")
+ltSmaLen        = input.int(200, "Long-Term SMA Length", minval = 20, group = grpLT)
+momLookbackBars = input.int(252, "Momentum Lookback (bars, ~12 months)", minval = 20, group = grpLT)
+momSkipBars     = input.int(21,  "Momentum Skip-Recent (bars, ~1 month)", minval = 0, group = grpLT)
 
 grpSig = "Signal Thresholds"
 buyThreshold    = input.int(40,  "Buy Threshold",          group = grpSig)
@@ -77,12 +74,9 @@ exitLongScore   = input.int(10,  "Exit Long when score falls below",  group = gr
 exitShortScore  = input.int(-10, "Exit Short when score rises above", group = grpSig)
 
 grpTrigger = "Signal Trigger"
-triggerMode   = input.string("EMA Crossover + Confluence", "Trigger Mode",
-     options = ["EMA Crossover + Confluence", "Confluence Score Threshold Only"], group = grpTrigger,
-     tooltip = "EMA Crossover + Confluence: BUY/SELL fires on the exact bar the chosen EMA pair crosses, as long as the confluence score already agrees. Confluence Score Threshold Only: ignores EMA crossovers and fires purely when the score crosses the Buy/Sell Threshold above.")
-emaCrossPair  = input.string("Fast/Mid", "EMA Crossover Pair", options = ["Fast/Mid", "Fast/Slow", "Mid/Slow"], group = grpTrigger)
-emaConfirmScore = input.int(15, "Min |Net Score| to Confirm EMA Crossover", minval = 0, group = grpTrigger,
-     tooltip = "Only used in EMA Crossover + Confluence mode. Keeps a crossover from firing a signal if the rest of the model strongly disagrees with it.")
+triggerMode     = input.string("EMA Crossover + Confluence", "Trigger Mode", options = ["EMA Crossover + Confluence", "Confluence Score Threshold Only"], group = grpTrigger)
+emaCrossPair    = input.string("Fast/Mid", "EMA Crossover Pair", options = ["Fast/Mid", "Fast/Slow", "Mid/Slow"], group = grpTrigger)
+emaConfirmScore = input.int(15, "Min Abs Net Score to Confirm EMA Crossover", minval = 0, group = grpTrigger)
 
 grpHTF = "Multi-Timeframe Filter"
 useHtfFilter = input.bool(true, "Require Higher-Timeframe Trend Alignment", group = grpHTF)
@@ -122,7 +116,10 @@ bbWidth = (bbUpper - bbLower) / bbMid
 atrVal = ta.atr(atrLen)
 
 ltSma = ta.sma(close, ltSmaLen)
-tsMomentum = close[momSkipBars] / close[momSkipBars + momLookbackBars] - 1
+momTotalBars = momSkipBars + momLookbackBars
+momRecentClose = close[momSkipBars]
+momPastClose = close[momTotalBars]
+tsMomentum = momRecentClose / momPastClose - 1
 
 // --------------------------- FACTOR 1: TREND (+/-20) ---------------------------
 trendPts = 0.0
@@ -181,17 +178,11 @@ htfBearish = htfEmaFast < htfEmaSlow
 // what you'd see visually on the chart), gated by the confluence score
 // already agreeing with that direction. Flip triggerMode to fall back to
 // the older "score crosses its own threshold" behaviour.
-emaCrossUp = switch emaCrossPair
-    "Fast/Mid"  => ta.crossover(emaFast, emaMid)
-    "Fast/Slow" => ta.crossover(emaFast, emaSlow)
-    "Mid/Slow"  => ta.crossover(emaMid, emaSlow)
-    => ta.crossover(emaFast, emaMid)
+isFastSlowPair = emaCrossPair == "Fast/Slow"
+isMidSlowPair  = emaCrossPair == "Mid/Slow"
 
-emaCrossDown = switch emaCrossPair
-    "Fast/Mid"  => ta.crossunder(emaFast, emaMid)
-    "Fast/Slow" => ta.crossunder(emaFast, emaSlow)
-    "Mid/Slow"  => ta.crossunder(emaMid, emaSlow)
-    => ta.crossunder(emaFast, emaMid)
+emaCrossUp = isMidSlowPair ? ta.crossover(emaMid, emaSlow) : isFastSlowPair ? ta.crossover(emaFast, emaSlow) : ta.crossover(emaFast, emaMid)
+emaCrossDown = isMidSlowPair ? ta.crossunder(emaMid, emaSlow) : isFastSlowPair ? ta.crossunder(emaFast, emaSlow) : ta.crossunder(emaFast, emaMid)
 
 useEmaCrossTrigger = triggerMode == "EMA Crossover + Confluence"
 
