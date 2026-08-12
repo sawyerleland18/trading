@@ -1,9 +1,17 @@
 """Historical OHLCV data loading with local caching.
 
-Uses yfinance (no API key required) as the default source. If the
-ALPHAVANTAGE_API_KEY environment variable is set, Alpha Vantage is used
-instead — useful in network environments where Yahoo Finance blocks
-datacenter/cloud IPs (a very common problem for yfinance on cloud servers).
+Uses yfinance (no API key required) as the default source. In network
+environments where Yahoo Finance blocks datacenter/cloud IPs (a very
+common problem for yfinance on cloud servers), an API-key-based source
+can be used instead, checked in this priority order:
+
+  1. TIINGO_API_KEY  — free tier includes full daily history, already
+     split+dividend adjusted. Preferred when available.
+  2. ALPHAVANTAGE_API_KEY — free tier only returns ~100 recent daily bars
+     (their full-history endpoint is now premium-only), so this is mostly
+     useful for short lookbacks, not multi-year backtests. Raw prices are
+     back-adjusted for splits here, but not dividends.
+
 Data is cached to python/data_cache/ as parquet so repeated
 backtests/optimizations don't re-download. Swap in another data source
 later (a broker API, a paid vendor, crypto exchange via ccxt, etc.) by
@@ -20,6 +28,7 @@ import pandas as pd
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "data_cache"
 ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
+TIINGO_BASE_URL = "https://api.tiingo.com/tiingo/daily"
 
 
 def _cache_path(ticker: str, interval: str) -> Path:
@@ -38,11 +47,12 @@ def load_ohlcv(
 ) -> pd.DataFrame:
     """Fetch OHLCV history for `ticker`, normalized to lower-case columns.
 
-    Uses Alpha Vantage if ALPHAVANTAGE_API_KEY is set in the environment,
-    otherwise yfinance. Raises RuntimeError with a clear message if the
-    source isn't installed/configured or the download fails — callers (CLI,
-    tests) should surface that directly instead of guessing why an empty
-    frame came back.
+    Source is chosen by which API key is set in the environment — see the
+    module docstring for priority order — falling back to yfinance if
+    neither is set. Raises RuntimeError with a clear message if the source
+    isn't installed/configured or the download fails — callers (CLI, tests)
+    should surface that directly instead of guessing why an empty frame
+    came back.
     """
     cache_file = _cache_path(ticker, interval)
     if use_cache and not force_refresh and cache_file.exists():
@@ -55,11 +65,15 @@ def load_ohlcv(
 
     # Always download the ticker's full available history and cache that —
     # a single API call regardless of the requested start/end — then filter
-    # locally. This matters most for Alpha Vantage, where free-tier requests
-    # are rate-limited, so a narrower `start` shouldn't cost an extra call.
-    api_key = os.environ.get("ALPHAVANTAGE_API_KEY")
-    if api_key:
-        full = _load_alpha_vantage(ticker, api_key, interval=interval)
+    # locally. This matters most for the API-key sources, where free-tier
+    # requests are rate-limited, so a narrower `start` shouldn't cost an
+    # extra call.
+    tiingo_key = os.environ.get("TIINGO_API_KEY")
+    av_key = os.environ.get("ALPHAVANTAGE_API_KEY")
+    if tiingo_key:
+        full = _load_tiingo(ticker, tiingo_key, interval=interval)
+    elif av_key:
+        full = _load_alpha_vantage(ticker, av_key, interval=interval)
     else:
         full = _load_yfinance(ticker, start=None, end=None, interval=interval)
 
@@ -97,6 +111,43 @@ def _load_yfinance(ticker: str, start: str | None, end: str | None, interval: st
     raw.columns = [str(c).lower() for c in raw.columns]
     raw.index.name = "date"
     return raw
+
+
+def _load_tiingo(ticker: str, api_key: str, interval: str) -> pd.DataFrame:
+    """Fetch daily OHLCV from Tiingo, using their already split+dividend
+    adjusted columns (adjOpen/adjHigh/adjLow/adjClose/adjVolume) — same
+    adjustment convention as yfinance's auto_adjust=True."""
+    import requests
+
+    if interval != "1d":
+        raise RuntimeError("Tiingo source currently only supports interval='1d'.")
+
+    url = f"{TIINGO_BASE_URL}/{ticker}/prices"
+    headers = {"Authorization": f"Token {api_key}", "Content-Type": "application/json"}
+    for attempt in range(3):
+        resp = requests.get(url, params={"format": "json"}, headers=headers, timeout=30)
+        if resp.status_code == 429:
+            if attempt < 2:
+                time.sleep(15)
+                continue
+            raise RuntimeError(f"Tiingo rate-limited the request for '{ticker}' after retries.")
+        if resp.status_code == 404:
+            raise RuntimeError(f"Tiingo has no data for ticker '{ticker}' (404).")
+        resp.raise_for_status()
+        records = resp.json()
+        break
+
+    if not records:
+        raise RuntimeError(f"No data returned for ticker '{ticker}' from Tiingo.")
+
+    df = pd.DataFrame(records)
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df = df.set_index("date").sort_index()
+    df = df.rename(columns={
+        "adjOpen": "open", "adjHigh": "high", "adjLow": "low",
+        "adjClose": "close", "adjVolume": "volume",
+    })
+    return df[["open", "high", "low", "close", "volume"]].astype(float)
 
 
 def _alpha_vantage_get(params: dict, api_key: str, ticker: str) -> dict:
