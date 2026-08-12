@@ -113,6 +113,22 @@ and signal button, there's no Python equivalent since the Python side has
 no chart to draw on; `net_score` crossing the same threshold is trivially
 derivable from `compute_confluence()`'s output if a Python consumer needs it.
 
+### Alert payloads (Pine-only)
+
+Every `alert()` call (entries, exits-via-score-fade, and the candle popup
+above) sends a JSON payload, not free text, built by `f_entryAlertJson()`
+and `f_scoreAlertJson()` — meant to be parsed directly by a webhook receiver
+(3Commas, Alertatron, a custom bot) rather than regexed out of a sentence.
+Entry payloads: `{"strategy","ticker","event":"entry","action":"buy"|"sell","price","stop","target","qty","score","time"}`.
+Score-popup payloads: `{"strategy","ticker","event":"score_alert","direction":"bullish"|"bearish","score","threshold","price","time"}`.
+The on-chart labels are unaffected — still human-readable text; only the
+`alert()` payload format changed. Note this only covers signal-generation
+events (entries, popups) — stop-loss/take-profit *fills* don't have an
+alert payload yet, since firing precisely on an order fill (as opposed to
+when the script evaluates a signal) needs `alert_message` on
+`strategy.exit()` rather than a plain `alert()` call; a natural follow-up
+if full automation coverage (including exits) is needed later.
+
 ### Multi-timeframe filter
 
 Both implementations optionally require the higher-timeframe trend (EMA

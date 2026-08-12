@@ -245,6 +245,21 @@ var float longTP  = na
 var float shortSL = na
 var float shortTP = na
 
+// alert() payloads below are JSON, not free text - built here so a webhook
+// bot (3Commas, Alertatron, a custom receiver, etc.) can parse them directly
+// instead of you having to regex a human-readable string. The on-chart
+// labels are unaffected - still plain text, this only changes what the
+// alert() calls send.
+f_entryAlertJson(action, price, stop, target, qty, score) =>
+    header = '{"strategy":"confluence_signal_system","ticker":"' + syminfo.ticker + '"'
+    fields = ',"event":"entry"' + ',"action":"' + action + '"' + ',"price":' + str.tostring(price, format.mintick) + ',"stop":' + str.tostring(stop, format.mintick) + ',"target":' + str.tostring(target, format.mintick) + ',"qty":' + str.tostring(qty, "#.########") + ',"score":' + str.tostring(score, "#.0") + ',"time":' + str.tostring(time)
+    header + fields + '}'
+
+f_scoreAlertJson(direction, score, threshold, price) =>
+    header = '{"strategy":"confluence_signal_system","ticker":"' + syminfo.ticker + '"'
+    fields = ',"event":"score_alert"' + ',"direction":"' + direction + '"' + ',"score":' + str.tostring(score, "#.0") + ',"threshold":' + str.tostring(threshold) + ',"price":' + str.tostring(price, format.mintick) + ',"time":' + str.tostring(time)
+    header + fields + '}'
+
 if enableLong and longCondition and strategy.position_size <= 0
     if strategy.position_size < 0
         strategy.close("Short", comment = "Flip to Long")
@@ -255,8 +270,7 @@ if enableLong and longCondition and strategy.position_size <= 0
          "\nSL " + str.tostring(longSL, format.mintick) + "\nTP " + str.tostring(longTP, format.mintick),
          style = label.style_label_up, color = color.new(color.green, 10), textcolor = color.white,
          size = size.small, yloc = yloc.belowbar)
-    alert("BUY " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | entry=" + str.tostring(close) +
-         " | stop=" + str.tostring(longSL) + " | target=" + str.tostring(longTP), alert.freq_once_per_bar)
+    alert(f_entryAlertJson("buy", close, longSL, longTP, longQty, netScore), alert.freq_once_per_bar)
 
 if enableShort and shortCondition and strategy.position_size >= 0
     if strategy.position_size > 0
@@ -268,8 +282,7 @@ if enableShort and shortCondition and strategy.position_size >= 0
          "\nSL " + str.tostring(shortSL, format.mintick) + "\nTP " + str.tostring(shortTP, format.mintick),
          style = label.style_label_down, color = color.new(color.red, 10), textcolor = color.white,
          size = size.small, yloc = yloc.abovebar)
-    alert("SELL " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | entry=" + str.tostring(close) +
-         " | stop=" + str.tostring(shortSL) + " | target=" + str.tostring(shortTP), alert.freq_once_per_bar)
+    alert(f_entryAlertJson("sell", close, shortSL, shortTP, shortQty, netScore), alert.freq_once_per_bar)
 
 // ------------------------- CANDLE BUY/SELL % POPUP -----------------------------
 // Independent of the strategy's own trade trigger above (which also requires
@@ -286,15 +299,13 @@ if showPopupAlert and popupBuyEvent and barstate.isconfirmed
     label.new(bar_index, low, text = "BUY " + str.tostring(netScore, "#") + "%",
          style = label.style_label_up, color = color.new(color.teal, 15), textcolor = color.white,
          size = size.small, yloc = yloc.belowbar)
-    alert("SCORE ALERT: " + syminfo.ticker + " net score crossed above " + str.tostring(popupThreshold) +
-         "% bullish (now " + str.tostring(netScore, "#.0") + "%) at " + str.tostring(close), alert.freq_once_per_bar)
+    alert(f_scoreAlertJson("bullish", netScore, popupThreshold, close), alert.freq_once_per_bar)
 
 if showPopupAlert and popupSellEvent and barstate.isconfirmed
     label.new(bar_index, high, text = "SELL " + str.tostring(math.abs(netScore), "#") + "%",
          style = label.style_label_down, color = color.new(color.orange, 15), textcolor = color.white,
          size = size.small, yloc = yloc.abovebar)
-    alert("SCORE ALERT: " + syminfo.ticker + " net score crossed below -" + str.tostring(popupThreshold) +
-         "% bearish (now " + str.tostring(netScore, "#.0") + "%) at " + str.tostring(close), alert.freq_once_per_bar)
+    alert(f_scoreAlertJson("bearish", netScore, popupThreshold, close), alert.freq_once_per_bar)
 
 alertcondition(popupBuyEvent,  title = "CSS Score Crossed Bullish Threshold", message = "Confluence Signal System: net score turned strongly BULLISH on {{ticker}} at {{close}}")
 alertcondition(popupSellEvent, title = "CSS Score Crossed Bearish Threshold", message = "Confluence Signal System: net score turned strongly BEARISH on {{ticker}} at {{close}}")
