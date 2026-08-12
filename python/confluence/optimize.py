@@ -36,6 +36,8 @@ def grid_search(
     use_regime_filter: bool = False,
     use_chop_filter: bool = False,
     slippage_pct: float = 0.0,
+    breadth: pd.DataFrame | None = None,
+    use_breadth_filter: bool = False,
 ) -> pd.DataFrame:
     """Try every combination in param_grid (dict of field_name -> list of values).
 
@@ -53,6 +55,7 @@ def grid_search(
         equity, trades = run_backtest(
             df, params=params, initial_capital=initial_capital, use_regime_filter=use_regime_filter,
             use_chop_filter=use_chop_filter, slippage_pct=slippage_pct,
+            breadth=breadth, use_breadth_filter=use_breadth_filter,
         )
         trade_df = trades_to_frame(trades)
         pnl_pct = trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float)
@@ -72,6 +75,8 @@ def walk_forward(
     use_regime_filter: bool = False,
     use_chop_filter: bool = False,
     slippage_pct: float = 0.0,
+    breadth: pd.DataFrame | None = None,
+    use_breadth_filter: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Sequential walk-forward: fold i is in-sample, fold i+1 is out-of-sample.
 
@@ -94,7 +99,7 @@ def walk_forward(
         is_results = grid_search(
             in_sample, param_grid, base_params=base, initial_capital=initial_capital,
             use_regime_filter=use_regime_filter, use_chop_filter=use_chop_filter,
-            slippage_pct=slippage_pct,
+            slippage_pct=slippage_pct, breadth=breadth, use_breadth_filter=use_breadth_filter,
         )
         if is_results.empty:
             continue
@@ -106,7 +111,7 @@ def walk_forward(
         oos_equity, oos_trades = run_backtest(
             out_sample, params=best_params, initial_capital=initial_capital,
             use_regime_filter=use_regime_filter, use_chop_filter=use_chop_filter,
-            slippage_pct=slippage_pct,
+            slippage_pct=slippage_pct, breadth=breadth, use_breadth_filter=use_breadth_filter,
         )
         oos_trade_df = trades_to_frame(oos_trades)
         oos_pnl = oos_trade_df["pnl_pct"] if len(oos_trade_df) else pd.Series(dtype=float)

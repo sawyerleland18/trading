@@ -62,6 +62,8 @@ def run_backtest(
     use_regime_filter: bool = False,
     use_chop_filter: bool = False,
     slippage_pct: float = 0.0,
+    breadth: pd.DataFrame | None = None,
+    use_breadth_filter: bool = False,
 ) -> tuple[pd.Series, list[Trade]]:
     """Run the confluence strategy over `df` (raw OHLCV) and return (equity_curve, trades).
 
@@ -86,6 +88,14 @@ def run_backtest(
     exits are treated as resting limit orders and are not slipped, matching
     standard backtesting convention. Defaults to 0 (no slippage) to keep
     existing callers' results unchanged unless explicitly opted in.
+
+    use_breadth_filter=True vetoes new entries against a market-breadth
+    regime (e.g. SPY's own 200-SMA trend) rather than the traded ticker's
+    own — don't short an individual name just because its own chart looks
+    weak if the broad market is still in an uptrend, and vice versa. Requires
+    `breadth` (output of `signals.compute_breadth()` on a reference ticker's
+    OHLCV, typically SPY) — raises if use_breadth_filter=True and breadth is
+    None, rather than silently no-op'ing.
     """
     p = params or ConfluenceParams()
     data = compute_confluence(df, p)
@@ -97,6 +107,16 @@ def run_backtest(
     else:
         data["htf_bullish"] = True
         data["htf_bearish"] = True
+
+    if use_breadth_filter:
+        if breadth is None:
+            raise ValueError("use_breadth_filter=True requires a `breadth` DataFrame (see signals.compute_breadth).")
+        aligned = breadth.reindex(data.index, method="ffill")
+        data["breadth_bullish"] = aligned["breadth_bullish"].fillna(False)
+        data["breadth_bearish"] = aligned["breadth_bearish"].fillna(False)
+    else:
+        data["breadth_bullish"] = True
+        data["breadth_bearish"] = True
 
     cash = initial_capital
     position: Trade | None = None
@@ -164,13 +184,17 @@ def run_backtest(
             regime_long_ok = (not use_regime_filter) or row["regime_bullish"]
             regime_short_ok = (not use_regime_filter) or row["regime_bearish"]
             chop_ok = (not use_chop_filter) or row["trending"]
+            breadth_long_ok = (not use_breadth_filter) or row["breadth_bullish"]
+            breadth_short_ok = (not use_breadth_filter) or row["breadth_bearish"]
 
-            if allow_long and row["long_signal"] and row["htf_bullish"] and regime_long_ok and chop_ok and qty > 0:
+            if (allow_long and row["long_signal"] and row["htf_bullish"] and regime_long_ok
+                    and chop_ok and breadth_long_ok and qty > 0):
                 entry_price = _slip(row["close"], slippage_pct, "buy")
                 fee = abs(entry_price * qty) * (commission_pct / 100)
                 cash -= fee
                 position = Trade(side="long", entry_date=ts, entry_price=entry_price, qty=qty, entry_atr=row["atr"])
-            elif allow_short and row["short_signal"] and row["htf_bearish"] and regime_short_ok and chop_ok and qty > 0:
+            elif (allow_short and row["short_signal"] and row["htf_bearish"] and regime_short_ok
+                    and chop_ok and breadth_short_ok and qty > 0):
                 entry_price = _slip(row["close"], slippage_pct, "sell")
                 fee = abs(entry_price * qty) * (commission_pct / 100)
                 cash -= fee

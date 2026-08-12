@@ -245,6 +245,65 @@ configuration so far (CAGR ~1%, Sharpe ~0.7, consistent walk-forward), and
 it's still a modest, not-yet-"trade this with real money" result relative
 to buy-and-hold.
 
+## Update 3 (2026-08-12): market-breadth filter — the best individual filter so far
+
+Idea: veto entries against a **separate reference ticker's** own trend
+(SPY's 200-SMA by default), not the traded ticker's own — distinct from the
+Long-Term Regime filter, which only looks at each ticker's own chart. Don't
+short an individual name just because its own price action looks weak if
+the broad market itself is still in an uptrend, and vice versa.
+
+**Watchlist aggregate, four configurations compared (all post-ATR-fix):**
+
+| Configuration | Median CAGR % | Median Sharpe | Median Max DD % | % Profitable | Total Trades |
+|---|---|---|---|---|---|
+| Baseline (no filters) | 0.37 | 0.21 | -5.05 | 80% | 321 |
+| Regime filter only | 0.34 | 0.20 | -4.12 | 80% | 210 |
+| **Breadth filter only** | **0.53** | **0.34** | -4.16 | 80% | 206 |
+| Regime + breadth + slippage 0.05% | 0.40 | 0.25 | -3.65 | 80% | 155 |
+
+Breadth alone is the single best-performing individual filter tested so
+far in this document — better than the regime filter alone on every
+aggregate metric, and it's **broad-based**: 8 of the 10 tickers improved
+(SPY, QQQ, AAPL, NVDA, AMZN, GOOGL, META, AMD all positive CAGR; only MSFT
+and TSLA stayed negative), not concentrated in one or two names the way the
+chop filter's failure was concentrated. That's the key difference between
+"ship this as default" and "don't" — breadth generalizes, chop didn't.
+
+**Mildly counterintuitive wrinkle: combining regime + breadth tests *worse*
+than breadth alone** (0.40%/0.25 Sharpe vs. 0.53%/0.34 Sharpe) — still
+better than baseline, but the combination doesn't simply add the two
+individual improvements together. Both filters are flavors of "don't fight
+an uptrend" (one via the ticker's own SMA200+momentum, one via SPY's own
+SMA200), so they likely overlap on a meaningful fraction of the same bars,
+and stacking gates cuts trade count (206→155) further without a
+proportional quality gain. Lesson: filters need to be validated in
+combination, not just individually — "more filters" is not automatically
+better even when every individual filter tested is itself an improvement.
+
+**SPY-specific** (breadth reference == traded ticker here, so this is close
+to but not identical to the regime filter's own effect on SPY — breadth is
+pure SMA200 timing, regime also folds in 12-1mo momentum):
+
+| Metric | Breadth only | Regime + breadth + slippage |
+|---|---|---|
+| CAGR | 0.79% | 0.92% |
+| Sharpe | 0.52 | 0.72 |
+| Max DD | -2.68% | -2.16% |
+| Trades | 21 | 15 |
+| Win Rate | 52.4% | 60.0% |
+| Side split | 12L/9S | 10L/5S |
+
+**Consequence:** `useBreadthFilter` now **defaults on in Pine** (same
+convention as the regime filter — Pine's defaults are what runs live on a
+chart out of the box) and stays opt-in in Python (`--breadth-filter`, same
+research-baseline convention as every other filter regardless of whether
+it's validated-good). Given the regime+breadth interaction above, the
+honest recommendation for anyone tuning this live is: **try breadth alone
+first**, and only add regime on top if you've separately confirmed it helps
+your specific ticker — don't assume stacking every validated filter
+together is the best configuration by default.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:

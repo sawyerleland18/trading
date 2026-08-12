@@ -160,9 +160,52 @@ while ADX says the market isn't trending (`adx <= adx_thresh`, the same
 threshold Factor 4 uses). This is a complementary filter to the Long-Term
 Regime one above: that one says "don't fight the big trend," this one says
 "don't trade when there's no trend to catch at all." Toggle: `useChopFilter`
-input (Pine, defaults on) / `use_chop_filter` param to `run_backtest()`
-(Python, defaults off — opt in via `--chop-filter` on the CLI) / `trending`
-column from `compute_confluence()`.
+input (Pine) / `use_chop_filter` param to `run_backtest()` (Python — opt in
+via `--chop-filter` on the CLI) / `trending` column from
+`compute_confluence()`. **Defaults off in both implementations** — real-data
+testing found it helped SPY specifically but made the cross-sectional
+watchlist aggregate worse (see docs/BACKTEST_RESULTS.md); not a blanket win
+with the single fixed `adxThresh` used here.
+
+### Market breadth filter
+
+Distinct from the Long-Term Regime filter above, which only looks at the
+*traded* ticker's own 200-SMA trend: this optionally vetoes new entries
+against a **separate reference ticker's** own 200-SMA trend (SPY by default)
+— don't short an individual name just because its own chart looks weak if
+the broad market itself is still in an uptrend, and vice versa for longs
+against a weak broad market. Same underlying rule as the regime filter
+(Faber SMA timing), just applied to a different series.
+
+Toggle: `useBreadthFilter` input + `breadthSymbol` input (Pine, symbol
+defaults to SPY) / `use_breadth_filter` + `breadth` params to
+`run_backtest()` (Python — opt in via `--breadth-filter` and
+`--breadth-ticker` on the CLI; `breadth` is the output of
+`signals.compute_breadth()` run once on the reference ticker's OHLCV and
+passed in, rather than every call re-fetching/re-computing it — matters for
+`multi_asset.run_watchlist()`, which loads and computes the reference
+ticker's breadth exactly once and reuses it across every ticker in the
+watchlist). Pine fetches the reference ticker's close and 200-SMA via
+`request.security(breadthSymbol, timeframe.period, ...)` — same timeframe as
+the chart, just a different symbol, with `lookahead=barmerge.lookahead_off`
+for the usual no-repaint guarantee.
+
+**Defaults on in Pine, off in Python** (same convention as the regime
+filter — Pine's defaults are what should run live on a chart out of the
+box; Python's default to a clean, opt-in baseline for research runs via
+`--breadth-filter`/`--regime-filter`/etc., regardless of whether a filter
+is validated-good). Unlike the chop filter, this one earned its default:
+real-data testing across the 10-ticker watchlist found it broad-based (8/10
+tickers improved, not concentrated in one or two names) and the
+single best-performing individual filter tested so far — median CAGR
+0.37%→0.53%, median Sharpe 0.21→0.34, vs. no filters at all, actually
+outperforming the regime filter alone on this watchlist. See
+`docs/BACKTEST_RESULTS.md` for the full comparison, including the mildly
+counterintuitive finding that regime+breadth *combined* tested slightly
+worse in aggregate than breadth alone — evidence the two filters overlap
+somewhat (both are flavors of "don't fight an uptrend") and stacking gates
+isn't simply additive; each addition and combination needs its own check,
+not an assumption that more filters is always better.
 
 ### Slippage
 

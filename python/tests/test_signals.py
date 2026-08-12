@@ -1,4 +1,4 @@
-from confluence.signals import ConfluenceParams, add_htf_filter, compute_confluence
+from confluence.signals import ConfluenceParams, add_htf_filter, compute_breadth, compute_confluence
 
 
 def test_compute_confluence_adds_expected_columns(ohlcv):
@@ -101,3 +101,13 @@ def test_add_htf_filter_columns(ohlcv):
     assert "htf_bullish" in out.columns and "htf_bearish" in out.columns
     # a bar can't be both bullish and bearish at once
     assert not (out["htf_bullish"] & out["htf_bearish"]).any()
+
+
+def test_compute_breadth_matches_close_vs_sma(ohlcv):
+    breadth = compute_breadth(ohlcv, sma_len=50)
+    assert {"breadth_bullish", "breadth_bearish"}.issubset(breadth.columns)
+    sma = ohlcv["close"].rolling(50).mean()
+    valid = sma.dropna().index
+    assert (breadth.loc[valid, "breadth_bullish"] == (ohlcv.loc[valid, "close"] > sma.loc[valid])).all()
+    # mutually exclusive wherever the SMA is defined
+    assert not (breadth.loc[valid, "breadth_bullish"] & breadth.loc[valid, "breadth_bearish"]).any()

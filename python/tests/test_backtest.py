@@ -1,8 +1,9 @@
 import numpy as np
+import pytest
 
 from confluence.backtest import run_backtest, trades_to_frame
 from confluence.metrics import summarize
-from confluence.signals import ConfluenceParams
+from confluence.signals import ConfluenceParams, compute_breadth
 
 
 def test_run_backtest_returns_full_length_equity_curve(ohlcv):
@@ -133,3 +134,26 @@ def test_zero_slippage_is_a_true_no_op(trending_ohlcv):
     equity_b, trades_b = run_backtest(trending_ohlcv)  # default
     assert equity_a.equals(equity_b)
     assert [t.entry_price for t in trades_a] == [t.entry_price for t in trades_b]
+
+
+def test_breadth_filter_requires_breadth_argument(ohlcv):
+    with pytest.raises(ValueError):
+        run_backtest(ohlcv, use_breadth_filter=True)
+
+
+def test_breadth_filter_blocks_entries_against_reference_ticker_trend(ohlcv, trending_ohlcv):
+    # Use trending_ohlcv (strong positive drift) as a stand-in "SPY" breadth
+    # reference and ohlcv (the plain fixture) as the traded ticker - two
+    # genuinely independent series, so this isn't just checking a ticker
+    # against its own regime (that's the separate regime-filter test).
+    breadth = compute_breadth(trending_ohlcv, sma_len=50)
+    bullish_share = breadth["breadth_bullish"].dropna().mean()
+    assert bullish_share > 0.5  # sanity check on the fixture's own drift
+
+    _, unfiltered_trades = run_backtest(ohlcv, use_breadth_filter=False)
+    _, filtered_trades = run_backtest(ohlcv, breadth=breadth, use_breadth_filter=True)
+
+    assert len(filtered_trades) <= len(unfiltered_trades)
+    for t in filtered_trades:
+        aligned = breadth.reindex([t.entry_date], method="ffill").iloc[0]
+        assert aligned["breadth_bullish"] if t.side == "long" else aligned["breadth_bearish"]

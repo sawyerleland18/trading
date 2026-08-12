@@ -13,7 +13,7 @@ import pandas as pd
 from .backtest import run_backtest, trades_to_frame
 from .data import load_ohlcv
 from .metrics import summarize
-from .signals import ConfluenceParams
+from .signals import ConfluenceParams, compute_breadth
 
 
 def run_watchlist(
@@ -26,6 +26,8 @@ def run_watchlist(
     use_regime_filter: bool = False,
     use_chop_filter: bool = False,
     slippage_pct: float = 0.0,
+    use_breadth_filter: bool = False,
+    breadth_ticker: str = "SPY",
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Backtest every ticker in `tickers` and return a summary DataFrame, one row per ticker.
@@ -33,7 +35,17 @@ def run_watchlist(
     Tickers that fail to download or have insufficient history are skipped
     with a warning printed to stdout (not raised), so one bad symbol doesn't
     kill a large batch run.
+
+    use_breadth_filter loads `breadth_ticker` (SPY by default) once and
+    reuses the same computed breadth regime for every ticker in the
+    watchlist, rather than re-fetching/re-computing it per ticker.
     """
+    p = params or ConfluenceParams()
+    breadth = None
+    if use_breadth_filter:
+        breadth_df = load_ohlcv(breadth_ticker, start=start, end=end)
+        breadth = compute_breadth(breadth_df, sma_len=p.lt_sma_len)
+
     rows = []
     for ticker in tickers:
         try:
@@ -46,6 +58,7 @@ def run_watchlist(
                 df, params=params, initial_capital=initial_capital,
                 use_htf_filter=use_htf_filter, use_regime_filter=use_regime_filter,
                 use_chop_filter=use_chop_filter, slippage_pct=slippage_pct,
+                breadth=breadth, use_breadth_filter=use_breadth_filter,
             )
             trade_df = trades_to_frame(trades)
             summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))

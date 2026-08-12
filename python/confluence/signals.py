@@ -275,3 +275,25 @@ def add_htf_filter(
     out["htf_bullish"] = (aligned.fillna(False)) & known
     out["htf_bearish"] = (~aligned.fillna(True)) & known
     return out
+
+
+def compute_breadth(breadth_df: pd.DataFrame, sma_len: int = 200) -> pd.DataFrame:
+    """Market-breadth regime from a reference index/ETF (SPY by default) —
+    distinct from a ticker's own Long-Term Regime factor, which only looks at
+    that ticker's own price. The idea: don't short an individual name just
+    because its own chart looks weak if the broad market itself is still in
+    an uptrend, and vice versa for longs against a weak broad market.
+
+    Same rule as the Long-Term Regime factor for consistency (Faber SMA
+    timing) — close > its own sma_len-period SMA — applied to the reference
+    ticker's data instead of the traded ticker's.
+
+    Returns a DataFrame indexed by date with breadth_bullish / breadth_bearish
+    (bool) columns, meant to be aligned onto a traded ticker's index via
+    `run_backtest(breadth=..., use_breadth_filter=True)`.
+    """
+    out = pd.DataFrame(index=breadth_df.index)
+    sma = ind.sma(breadth_df["close"], sma_len)
+    out["breadth_bullish"] = breadth_df["close"] > sma
+    out["breadth_bearish"] = breadth_df["close"] < sma
+    return out
