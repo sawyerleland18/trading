@@ -124,8 +124,12 @@ def _load_tiingo(ticker: str, api_key: str, interval: str) -> pd.DataFrame:
 
     url = f"{TIINGO_BASE_URL}/{ticker}/prices"
     headers = {"Authorization": f"Token {api_key}", "Content-Type": "application/json"}
+    # Without an explicit startDate, Tiingo's prices endpoint returns only
+    # the single most recent bar — 1990-01-01 predates every source ticker's
+    # actual listing, so this effectively means "full available history".
+    params = {"format": "json", "startDate": "1990-01-01"}
     for attempt in range(3):
-        resp = requests.get(url, params={"format": "json"}, headers=headers, timeout=30)
+        resp = requests.get(url, params=params, headers=headers, timeout=30)
         if resp.status_code == 429:
             if attempt < 2:
                 time.sleep(15)
@@ -143,11 +147,14 @@ def _load_tiingo(ticker: str, api_key: str, interval: str) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
     df = df.set_index("date").sort_index()
-    df = df.rename(columns={
+    # Tiingo's response has both raw (open/high/...) and adjusted
+    # (adjOpen/adjHigh/...) columns — select the adjusted ones only, then
+    # rename, or the raw duplicates collide with the renamed columns.
+    df = df[["adjOpen", "adjHigh", "adjLow", "adjClose", "adjVolume"]].rename(columns={
         "adjOpen": "open", "adjHigh": "high", "adjLow": "low",
         "adjClose": "close", "adjVolume": "volume",
     })
-    return df[["open", "high", "low", "close", "volume"]].astype(float)
+    return df.astype(float)
 
 
 def _alpha_vantage_get(params: dict, api_key: str, ticker: str) -> dict:
