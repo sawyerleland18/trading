@@ -121,6 +121,32 @@ showed exactly that: SPY took 15 short trades against 12 longs through an
 in via `--regime-filter` on the CLI) / `regime_bullish` & `regime_bearish`
 columns from `compute_confluence()`.
 
+### Chop filter
+
+Both implementations can optionally veto *any* new entry — long or short —
+while ADX says the market isn't trending (`adx <= adx_thresh`, the same
+threshold Factor 4 uses). This is a complementary filter to the Long-Term
+Regime one above: that one says "don't fight the big trend," this one says
+"don't trade when there's no trend to catch at all." Toggle: `useChopFilter`
+input (Pine, defaults on) / `use_chop_filter` param to `run_backtest()`
+(Python, defaults off — opt in via `--chop-filter` on the CLI) / `trending`
+column from `compute_confluence()`.
+
+### Slippage
+
+Both implementations can model adverse fills, not just commission. In the
+Python engine, `slippage_pct` widens every market-style fill against you —
+new entries, stop-loss exits, and score-fade exits — by that percentage;
+take-profit exits are treated as resting limit orders and aren't slipped,
+which is standard backtesting convention. Pine has no percentage-slippage
+option, so it uses the built-in `slippage` argument to `strategy()` (in
+ticks, applied automatically to every fill) — not directly comparable to the
+Python percentage since tick value differs per instrument, but the same
+purpose. Both default to a small-but-nonzero amount of protection now (Pine:
+5 ticks; Python CLI: opt in via `--slippage <pct>`) after real-data testing
+showed the strategy's edge is thin enough that unrealistically clean fills
+were flattering the numbers.
+
 ### Risk management
 
 Both implementations size positions by **volatility risk**, not a fixed
@@ -130,7 +156,11 @@ regardless of how volatile the instrument is.
 
 Stop-loss and take-profit are **locked in at the moment of entry** (ATR at
 that bar × the configured multipliers) and held fixed for the life of the
-trade in both implementations — they do not recalculate every bar. Default
+trade in both implementations — they do not recalculate every bar. (This was
+the stated design from the start and always true of the Pine script, but the
+Python engine had a bug — fixed 2026-08-12 — where it recomputed stop/target
+from each *current* bar's live ATR instead of the frozen entry-bar ATR;
+`Trade.entry_atr` now enforces the freeze, with a regression test.) Default
 multipliers are 1.5×ATR stop / 3×ATR target, a 2:1 reward-to-risk ratio, so
 the strategy only needs to win roughly 1 in 3 trades to break even before
 costs. Tighten/widen via the `atr_mult_sl` / `atr_mult_tp` inputs (Pine) or

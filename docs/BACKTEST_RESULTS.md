@@ -138,6 +138,113 @@ the fix measurably helped" — not "the system is now profitable." The next
 open item from the original assessment (explicit slippage modeling, more
 walk-forward folds/history) still stands.
 
+## Update 2 (2026-08-12): a real bug fix, a filter that helped, and a filter that didn't
+
+Three changes were tested together this round: (1) a real correctness bug
+found and fixed in the Python backtest engine, (2) a new chop filter, and
+(3) explicit slippage modeling. Reporting all three honestly, including the
+one that made things worse.
+
+### Bug fix: stop/target were drifting, not fixed
+
+While adding the slippage tests below, found that the Python engine's
+stop-loss/take-profit levels were being **recomputed every bar from that
+bar's live ATR**, not frozen at the ATR value from the moment of entry. This
+contradicted both the documented design (`docs/ARCHITECTURE.md`) and the
+Pine script's actual behavior (`longSL`/`longTP` are assigned with `:=`
+exactly once, in the entry block, and never touched again). Fixed by adding
+`Trade.entry_atr`, frozen at entry, with a regression test
+(`test_stop_and_target_stay_fixed_for_the_life_of_a_trade`). This affects
+every number reported anywhere above this line in this document — all
+figures below are post-fix.
+
+Post-fix, pre-any-new-filter baseline for SPY: CAGR 0.58% (was 0.42%),
+Sharpe 0.33 (was 0.23), max DD -4.02% (was -5.05%). The regime filter's
+own effect (from Update 1) holds up and slightly improves post-fix: SPY
+CAGR 1.04%, Sharpe 0.70, max DD -2.10%, 17 trades, 58.8% win rate, side
+10L/7S.
+
+### Chop filter: helped SPY, hurt the watchlist in aggregate — do not ship as default
+
+The idea: veto *any* new entry, long or short, while ADX says the market
+isn't trending (`adxThresh=20`, the same threshold Factor 4 already uses).
+Complementary to the regime filter in theory — that one says "don't fight
+the big trend," this says "don't trade when there's no trend to catch."
+
+**On SPY alone it looked great:** regime+chop vs. regime-only — Sharpe 0.79
+vs. 0.70, max DD -1.70% vs. -2.10%, win rate 75% vs. 59% — at the cost of
+trade count dropping from 17 to 8.
+
+**Across the full 10-ticker watchlist it made things worse, not better:**
+
+| Configuration | Median CAGR % | Median Sharpe | Median Max DD % | % Profitable | Total Trades |
+|---|---|---|---|---|---|
+| Baseline (post-fix, no filters) | 0.37 | 0.21 | -5.05 | 80% | 321 |
+| Regime filter only | 0.34 | 0.20 | -4.12 | 80% | 210 |
+| Chop filter only | **-0.21** | **-0.15** | -4.23 | **40%** | 150 |
+| Regime + chop + slippage | **-0.03** | **-0.03** | -2.99 | **40%** | 78 |
+
+Adding the chop filter — alone, or combined with the regime filter — flips
+the aggregate median Sharpe *negative* and cuts the fraction of profitable
+tickers from 80% to 40%. TSLA's win rate under chop+regime+slippage dropped
+to 12% on 8 trades, MSFT to 17% on 6 trades — a single fixed ADX threshold
+applied uniformly does not generalize across instruments with different
+volatility characters, and the resulting per-ticker sample sizes (5-14
+trades over 11.6 years) are too thin to trust individually regardless.
+
+**Consequence:** the chop filter is implemented and available
+(`use_chop_filter` / `--chop-filter` / `useChopFilter`) but now **defaults
+off in both implementations** (previously defaulted on in Pine, matching
+the other filters — corrected after this result). It's a real, useful
+option to test on an individual, already-well-understood ticker — the SPY
+walk-forward below shows it can meaningfully help there — but it is not a
+blanket improvement and should not be treated as one. This is the sort of
+thing that's easy to get backwards from intuition or a single-ticker demo,
+which is the whole reason this system runs against real cross-sectional
+data before trusting any change.
+
+### Slippage: a small, real, non-catastrophic drag
+
+`slippage_pct` (Python) / the Pine `strategy()` `slippage` argument (bumped
+from 1 tick to 5) now widen every entry, stop-loss exit, and score-fade exit
+against you; take-profit exits are treated as resting limit orders and
+aren't slipped. At a modest 0.05% on SPY with regime+chop: CAGR 0.72% (was
+0.73% without slippage), Sharpe 0.78 (was 0.79) — a small, expected drag,
+not something that flips the conclusion either direction. Worth keeping on
+for any figure meant to be trusted, since it costs almost nothing and
+removes one source of the numbers being flattered by unrealistically clean
+fills.
+
+### Walk-forward, recommended stack (regime filter + 0.05% slippage, SPY, 2010-2026)
+
+| Fold | In-sample Sharpe | Out-of-sample Sharpe | OOS CAGR % | OOS Max DD % | OOS Trades |
+|---|---|---|---|---|---|
+| 0 | -0.05 | **0.98** | 1.58 | -1.45 | 3 |
+| 1 | 0.98 | **0.73** | 1.21 | -1.36 | 5 |
+| 2 | 0.73 | **0.98** | 2.20 | -2.62 | 7 |
+
+All three out-of-sample folds are now positive and reasonably close to each
+other (0.73-0.98) — the most internally consistent walk-forward result
+across every round of testing so far. For reference, adding the chop filter
+on top of this (SPY-only, not the recommended default) pushed OOS Sharpe
+even higher (0.86-1.46) and OOS CAGR up to 3.0% in the best fold, but at
+2-4 trades per fold — too thin to add real confidence on top of what's
+already a small sample, which is exactly why it isn't the default.
+
+### Revised verdict
+
+The bug fix and the regime filter are both real, validated improvements.
+The chop filter is a validated *non*-improvement in its current form (fixed
+global ADX threshold) and now correctly defaults off — a useful reminder
+that not every well-motivated idea survives contact with real,
+cross-sectional data, and that's exactly the point of testing this way
+instead of shipping on intuition. Slippage modeling didn't change the
+conclusion but removes a source of the numbers being too optimistic. Net
+state: SPY with regime filter + slippage is the strongest validated
+configuration so far (CAGR ~1%, Sharpe ~0.7, consistent walk-forward), and
+it's still a modest, not-yet-"trade this with real money" result relative
+to buy-and-hold.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:

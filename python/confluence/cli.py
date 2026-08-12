@@ -37,6 +37,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
     equity, trades = run_backtest(
         df, params=params, initial_capital=args.capital,
         use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
+        use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
     )
     trade_df = trades_to_frame(trades)
     summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))
@@ -51,6 +52,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
     result = run_watchlist(
         tickers, start=args.start, end=args.end,
         use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
+        use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
     )
     if result.empty:
         print("No results.")
@@ -72,7 +74,10 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         "atr_mult_sl": [1.0, 1.5, 2.0],
         "atr_mult_tp": [2.0, 3.0, 4.0],
     }
-    folds, best_params = walk_forward(df, grid, n_folds=args.folds, use_regime_filter=args.regime_filter)
+    folds, best_params = walk_forward(
+        df, grid, n_folds=args.folds, use_regime_filter=args.regime_filter,
+        use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
+    )
     pd.set_option("display.width", 200)
     print(folds)
     print("\nFinal recommended params (from last fold's best in-sample fit):")
@@ -93,6 +98,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--regime-filter", action="store_true",
         help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
     )
+    bt.add_argument(
+        "--chop-filter", action="store_true",
+        help="Veto any new entry while ADX says the market isn't trending",
+    )
+    bt.add_argument(
+        "--slippage", type=float, default=0.0,
+        help="Adverse slippage %% applied to entries, stop-loss exits, and score-fade exits (default 0)",
+    )
     bt.add_argument("--refresh", action="store_true", help="Bypass cache and re-download")
     bt.add_argument("--out", default=None, help="CSV path to save the trade log")
     bt.set_defaults(func=cmd_backtest)
@@ -106,6 +119,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--regime-filter", action="store_true",
         help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
     )
+    scan.add_argument(
+        "--chop-filter", action="store_true",
+        help="Veto any new entry while ADX says the market isn't trending",
+    )
+    scan.add_argument(
+        "--slippage", type=float, default=0.0,
+        help="Adverse slippage %% applied to entries, stop-loss exits, and score-fade exits (default 0)",
+    )
     scan.add_argument("--out", default=None, help="CSV path to save the summary table")
     scan.set_defaults(func=cmd_scan)
 
@@ -117,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument(
         "--regime-filter", action="store_true",
         help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
+    )
+    opt.add_argument(
+        "--chop-filter", action="store_true",
+        help="Veto any new entry while ADX says the market isn't trending",
+    )
+    opt.add_argument(
+        "--slippage", type=float, default=0.0,
+        help="Adverse slippage %% applied to entries, stop-loss exits, and score-fade exits (default 0)",
     )
     opt.add_argument("--refresh", action="store_true")
     opt.set_defaults(func=cmd_optimize)

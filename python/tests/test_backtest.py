@@ -79,3 +79,57 @@ def test_regime_filter_blocks_entries_against_the_long_term_trend(trending_ohlcv
     for t in filtered_trades:
         bullish_at_entry = computed.loc[t.entry_date, "regime_bullish"]
         assert bullish_at_entry if t.side == "long" else not bullish_at_entry
+
+
+def test_chop_filter_only_enters_when_trending(ohlcv):
+    from confluence.signals import compute_confluence
+
+    _, unfiltered_trades = run_backtest(ohlcv, use_chop_filter=False)
+    _, filtered_trades = run_backtest(ohlcv, use_chop_filter=True)
+
+    assert len(filtered_trades) <= len(unfiltered_trades)
+
+    computed = compute_confluence(ohlcv)
+    for t in filtered_trades:
+        assert computed.loc[t.entry_date, "trending"]
+
+
+def test_stop_and_target_stay_fixed_for_the_life_of_a_trade(trending_ohlcv):
+    """Regression test: stop/target must be locked to the ATR *at entry*, not
+    recomputed from each bar's live ATR while the position is held — matches
+    the Pine script, which assigns longSL/longTP with `:=` exactly once, in
+    the entry block."""
+    _, trades = run_backtest(trending_ohlcv, params=ConfluenceParams(atr_mult_sl=1.5, atr_mult_tp=3.0))
+    assert len(trades) >= 1
+    for t in trades:
+        assert t.entry_atr > 0
+        if t.exit_reason == "take_profit":
+            expected = t.entry_price + t.entry_atr * 3.0 if t.side == "long" else t.entry_price - t.entry_atr * 3.0
+            assert t.exit_price == expected
+        elif t.exit_reason == "stop_loss":
+            expected = t.entry_price - t.entry_atr * 1.5 if t.side == "long" else t.entry_price + t.entry_atr * 1.5
+            assert t.exit_price == expected
+
+
+def test_slippage_worsens_entry_fills(trending_ohlcv):
+    # Entries happen on the signal bar regardless of slippage (slippage only
+    # changes the *fill price*, not the entry decision or its timing), so
+    # trade-for-trade comparison by entry_date is safe here.
+    _, clean_trades = run_backtest(trending_ohlcv, slippage_pct=0.0)
+    _, slipped_trades = run_backtest(trending_ohlcv, slippage_pct=0.5)
+
+    assert len(slipped_trades) == len(clean_trades)  # same signals, only fills differ
+    clean_by_date = {t.entry_date: t for t in clean_trades}
+    for slipped_t in slipped_trades:
+        clean_t = clean_by_date[slipped_t.entry_date]
+        if slipped_t.side == "long":
+            assert slipped_t.entry_price >= clean_t.entry_price  # paid more to get in
+        else:
+            assert slipped_t.entry_price <= clean_t.entry_price  # received less to get in
+
+
+def test_zero_slippage_is_a_true_no_op(trending_ohlcv):
+    equity_a, trades_a = run_backtest(trending_ohlcv, slippage_pct=0.0)
+    equity_b, trades_b = run_backtest(trending_ohlcv)  # default
+    assert equity_a.equals(equity_b)
+    assert [t.entry_price for t in trades_a] == [t.entry_price for t in trades_b]

@@ -20,6 +20,13 @@ def test_regime_bullish_bearish_are_mutually_exclusive(ohlcv):
     assert (valid["regime_bullish"] == (valid["long_term_pts"] > 0)).all()
 
 
+def test_trending_column_matches_adx_threshold(ohlcv):
+    p = ConfluenceParams()
+    out = compute_confluence(ohlcv, p)
+    valid = out.dropna(subset=["adx"])
+    assert (valid["trending"] == (valid["adx"] > p.adx_thresh)).all()
+
+
 def test_net_score_bounded(ohlcv):
     out = compute_confluence(ohlcv)
     valid = out["net_score"].dropna()

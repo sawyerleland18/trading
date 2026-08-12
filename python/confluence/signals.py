@@ -163,6 +163,11 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
     trending = out["adx"] > p.adx_thresh
     vola_pts = np.where(trending, np.where(out["plus_di"] > out["minus_di"], 10, -10), 0)
     out["vola_pts"] = vola_pts.astype(float)
+    # Exposed separately (not just folded into vola_pts) so
+    # `run_backtest(use_chop_filter=True)` can veto *any* new entry —
+    # long or short — while ADX says the market isn't trending at all,
+    # rather than just softening the score like vola_pts does.
+    out["trending"] = trending
 
     # ---- Factor 5: Mean-reversion / Bollinger (+-10) ----
     breakout_up = (close > out["bb_upper"]) & (out["bb_width"] > out["bb_width"].shift(1))
