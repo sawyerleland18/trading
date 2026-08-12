@@ -91,8 +91,9 @@ atrMultTP     = input.float(3.0, "ATR Take-Profit Multiplier", minval = 0.5, ste
 riskPerTrade  = input.float(1.0, "Risk per Trade (% of equity)", minval = 0.1, step = 0.1, group = grpRisk)
 
 grpUI = "Display"
-showDashboard = input.bool(true, "Show Score Dashboard", group = grpUI)
-showBB        = input.bool(true, "Show Bollinger Bands", group = grpUI)
+showSignalButton = input.bool(true, "Show Big BUY/SELL Signal Button", group = grpUI)
+showDashboard    = input.bool(true, "Show Detailed Data Panel", group = grpUI)
+showBB           = input.bool(true, "Show Bollinger Bands", group = grpUI)
 
 // ------------------------------- CORE SERIES ---------------------------------
 emaFast = ta.ema(close, emaFastLen)
@@ -278,43 +279,127 @@ bgcolor(bgColor)
 alertcondition(longCondition,  title = "CSS Buy Signal",  message = "Confluence Signal System: BUY {{ticker}} at {{close}}")
 alertcondition(shortCondition, title = "CSS Sell Signal", message = "Confluence Signal System: SELL {{ticker}} at {{close}}")
 
-// ---------------------------------- DASHBOARD --------------------------------------
-var table dash = table.new(position.top_right, 2, 12, bgcolor = color.new(color.black, 20), border_width = 1)
+// ------------------------------ DASHBOARD DATA -------------------------------------
+// Everything the two on-chart panels below display is computed here first as
+// plain variables (not functions) and pre-formatted into text, to keep the
+// panel-drawing code itself as simple as possible.
 
-regime() =>
-    netScore >= strongBuyLevel ? "STRONG BUY" :
-     netScore >= buyThreshold ? "BUY" :
-     netScore <= strongSellLevel ? "STRONG SELL" :
-     netScore <= sellThreshold ? "SELL" : "NEUTRAL"
+signalWord = netScore >= strongBuyLevel ? "STRONG BUY" : netScore >= buyThreshold ? "BUY" : netScore <= strongSellLevel ? "STRONG SELL" : netScore <= sellThreshold ? "SELL" : "NEUTRAL"
+signalColor = netScore >= strongBuyLevel ? color.new(color.lime, 0) : netScore >= buyThreshold ? color.new(color.green, 0) : netScore <= strongSellLevel ? color.new(color.red, 0) : netScore <= sellThreshold ? color.new(color.maroon, 0) : color.new(color.gray, 20)
+strengthPct = math.abs(netScore)
+strengthText = str.tostring(strengthPct, "#") + "%"
 
-regimeColor() =>
-    netScore >= buyThreshold ? color.lime : netScore <= sellThreshold ? color.red : color.silver
+positionText = strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+positionColor = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver
+entryPriceText = strategy.position_size != 0 ? str.tostring(strategy.position_avg_price, format.mintick) : "-"
+slText = na(slPlotSeries) ? "-" : str.tostring(slPlotSeries, format.mintick)
+tpText = na(tpPlotSeries) ? "-" : str.tostring(tpPlotSeries, format.mintick)
+openPlPct = strategy.position_size != 0 ? (strategy.openprofit / (math.abs(strategy.position_size) * strategy.position_avg_price)) * 100 : na
+openPlText = na(openPlPct) ? "-" : str.tostring(openPlPct, "#.00") + "%"
+openPlColor = na(openPlPct) ? color.silver : openPlPct >= 0 ? color.lime : color.red
 
-positionLabel() =>
-    strategy.position_size > 0 ? "LONG" : strategy.position_size < 0 ? "SHORT" : "FLAT"
+rsiText = na(rsi) ? "-" : str.tostring(rsi, "#.0")
+macdHistText = na(macdHist) ? "-" : str.tostring(macdHist, "#.####")
+adxText = na(adx) ? "-" : str.tostring(adx, "#.0")
+relVolRatio = volSma != 0 ? volume / volSma : na
+relVolText = na(relVolRatio) ? "-" : str.tostring(relVolRatio, "#.00") + "x"
+atrText = na(atrVal) ? "-" : str.tostring(atrVal, format.mintick)
+emaVsSlowPct = emaSlow != 0 ? (close - emaSlow) / emaSlow * 100 : na
+emaVsSlowText = na(emaVsSlowPct) ? "-" : str.tostring(emaVsSlowPct, "#.00") + "%"
+momText = na(tsMomentum) ? "-" : str.tostring(tsMomentum * 100, "#.0") + "%"
+htfTrendText = htfBullish ? "BULLISH" : htfBearish ? "BEARISH" : "FLAT"
+
+closedTrades = strategy.closedtrades
+winRatePct = closedTrades > 0 ? (strategy.wintrades / closedTrades) * 100 : na
+winRateText = na(winRatePct) ? "-" : str.tostring(winRatePct, "#.0") + "%"
+pfValue = strategy.grossloss != 0 ? strategy.grossprofit / math.abs(strategy.grossloss) : na
+pfText = na(pfValue) ? (strategy.grossprofit > 0 ? "Inf" : "-") : str.tostring(pfValue, "#.00")
+netProfitPct = (strategy.netprofit / strategy.initial_capital) * 100
+netProfitText = str.tostring(netProfitPct, "#.00") + "%"
+netProfitColor = netProfitPct >= 0 ? color.lime : color.red
+maxDDPct = (strategy.max_drawdown / strategy.initial_capital) * 100
+maxDDText = str.tostring(maxDDPct, "#.00") + "%"
+
+// ------------------------------- SIGNAL BUTTON --------------------------------------
+// A big, hard-to-miss BUY/SELL/NEUTRAL readout at the top-center of the
+// chart, with the signal strength shown as a percentage (0-100%, since the
+// net score is already built on a 0-100 point budget per side).
+var table signalBox = table.new(position.top_center, 1, 2, border_width = 2, frame_width = 2, frame_color = color.white)
+
+if showSignalButton and barstate.islast
+    table.cell(signalBox, 0, 0, signalWord, text_size = size.huge, text_color = color.white, bgcolor = signalColor)
+    table.cell(signalBox, 0, 1, "STRENGTH " + strengthText, text_size = size.large, text_color = color.white, bgcolor = color.new(color.black, 20))
+
+// --------------------------- DETAILED DATA PANEL -------------------------------------
+var table dash = table.new(position.top_right, 2, 32, bgcolor = color.new(color.black, 20), border_width = 1)
+sectionBg = color.new(color.blue, 60)
 
 if showDashboard and barstate.islast
-    table.cell(dash, 0, 0, "Confluence Signal System", text_color = color.white, bgcolor = color.new(color.blue, 30))
-    table.cell(dash, 1, 0, "", bgcolor = color.new(color.blue, 30))
-    table.cell(dash, 0, 1, "Net Score")
-    table.cell(dash, 1, 1, str.tostring(netScore, "#.0"), text_color = regimeColor())
-    table.cell(dash, 0, 2, "Regime")
-    table.cell(dash, 1, 2, regime(), text_color = regimeColor())
-    table.cell(dash, 0, 3, "Trend (+/-20)")
-    table.cell(dash, 1, 3, str.tostring(trendPts, "#.0"))
-    table.cell(dash, 0, 4, "Momentum (+/-20)")
-    table.cell(dash, 1, 4, str.tostring(momentumPts, "#.0"))
-    table.cell(dash, 0, 5, "Volume (+/-15)")
-    table.cell(dash, 1, 5, str.tostring(volumePts, "#.0"))
-    table.cell(dash, 0, 6, "Volatility (+/-10)")
-    table.cell(dash, 1, 6, str.tostring(volaPts, "#.0"))
-    table.cell(dash, 0, 7, "Mean-Rev (+/-10)")
-    table.cell(dash, 1, 7, str.tostring(bbPts, "#.0"))
-    table.cell(dash, 0, 8, "LT Regime (+/-25)")
-    table.cell(dash, 1, 8, str.tostring(longTermPts, "#.0"))
-    table.cell(dash, 0, 9, "Position")
-    table.cell(dash, 1, 9, positionLabel(), text_color = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver)
-    table.cell(dash, 0, 10, "Stop Loss")
-    table.cell(dash, 1, 10, na(slPlotSeries) ? "-" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
-    table.cell(dash, 0, 11, "Take Profit")
-    table.cell(dash, 1, 11, na(tpPlotSeries) ? "-" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)
+    table.cell(dash, 0, 0, "Confluence Signal System", text_color = color.white, bgcolor = color.new(color.blue, 30), text_size = size.small)
+    table.cell(dash, 1, 0, "", bgcolor = color.new(color.blue, 30), text_size = size.small)
+    table.cell(dash, 0, 1, "Net Score", text_size = size.small)
+    table.cell(dash, 1, 1, str.tostring(netScore, "#.0"), text_color = signalColor, text_size = size.small)
+    table.cell(dash, 0, 2, "Regime", text_size = size.small)
+    table.cell(dash, 1, 2, signalWord, text_color = signalColor, text_size = size.small)
+    table.cell(dash, 0, 3, "Strength", text_size = size.small)
+    table.cell(dash, 1, 3, strengthText, text_color = signalColor, text_size = size.small)
+
+    table.cell(dash, 0, 4, "FACTOR BREAKDOWN", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 4, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 5, "Trend (+/-20)", text_size = size.small)
+    table.cell(dash, 1, 5, str.tostring(trendPts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 6, "Momentum (+/-20)", text_size = size.small)
+    table.cell(dash, 1, 6, str.tostring(momentumPts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 7, "Volume (+/-15)", text_size = size.small)
+    table.cell(dash, 1, 7, str.tostring(volumePts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 8, "Volatility (+/-10)", text_size = size.small)
+    table.cell(dash, 1, 8, str.tostring(volaPts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 9, "Mean-Rev (+/-10)", text_size = size.small)
+    table.cell(dash, 1, 9, str.tostring(bbPts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 10, "LT Regime (+/-25)", text_size = size.small)
+    table.cell(dash, 1, 10, str.tostring(longTermPts, "#.0"), text_size = size.small)
+
+    table.cell(dash, 0, 11, "LIVE INDICATORS", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 11, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 12, "RSI (14)", text_size = size.small)
+    table.cell(dash, 1, 12, rsiText, text_size = size.small)
+    table.cell(dash, 0, 13, "MACD Hist", text_size = size.small)
+    table.cell(dash, 1, 13, macdHistText, text_size = size.small)
+    table.cell(dash, 0, 14, "ADX", text_size = size.small)
+    table.cell(dash, 1, 14, adxText, text_size = size.small)
+    table.cell(dash, 0, 15, "Rel Volume", text_size = size.small)
+    table.cell(dash, 1, 15, relVolText, text_size = size.small)
+    table.cell(dash, 0, 16, "ATR", text_size = size.small)
+    table.cell(dash, 1, 16, atrText, text_size = size.small)
+    table.cell(dash, 0, 17, "Price vs EMA200", text_size = size.small)
+    table.cell(dash, 1, 17, emaVsSlowText, text_size = size.small)
+    table.cell(dash, 0, 18, "12-1mo Momentum", text_size = size.small)
+    table.cell(dash, 1, 18, momText, text_size = size.small)
+    table.cell(dash, 0, 19, "HTF Trend", text_size = size.small)
+    table.cell(dash, 1, 19, htfTrendText, text_size = size.small)
+
+    table.cell(dash, 0, 20, "POSITION", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 20, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 21, "Position", text_size = size.small)
+    table.cell(dash, 1, 21, positionText, text_color = positionColor, text_size = size.small)
+    table.cell(dash, 0, 22, "Entry Price", text_size = size.small)
+    table.cell(dash, 1, 22, entryPriceText, text_size = size.small)
+    table.cell(dash, 0, 23, "Stop Loss", text_size = size.small)
+    table.cell(dash, 1, 23, slText, text_color = color.red, text_size = size.small)
+    table.cell(dash, 0, 24, "Take Profit", text_size = size.small)
+    table.cell(dash, 1, 24, tpText, text_color = color.lime, text_size = size.small)
+    table.cell(dash, 0, 25, "Open P/L", text_size = size.small)
+    table.cell(dash, 1, 25, openPlText, text_color = openPlColor, text_size = size.small)
+
+    table.cell(dash, 0, 26, "STRATEGY HISTORY (this chart)", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 26, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 27, "Closed Trades", text_size = size.small)
+    table.cell(dash, 1, 27, str.tostring(closedTrades, "#"), text_size = size.small)
+    table.cell(dash, 0, 28, "Win Rate", text_size = size.small)
+    table.cell(dash, 1, 28, winRateText, text_size = size.small)
+    table.cell(dash, 0, 29, "Profit Factor", text_size = size.small)
+    table.cell(dash, 1, 29, pfText, text_size = size.small)
+    table.cell(dash, 0, 30, "Net Profit", text_size = size.small)
+    table.cell(dash, 1, 30, netProfitText, text_color = netProfitColor, text_size = size.small)
+    table.cell(dash, 0, 31, "Max Drawdown", text_size = size.small)
+    table.cell(dash, 1, 31, maxDDText, text_color = color.red, text_size = size.small)

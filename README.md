@@ -63,6 +63,18 @@ docs/                          architecture + roadmap
 2. Click **Add to Chart**. Because it's written as a `strategy()`, the
    **Strategy Tester** tab immediately shows equity curve, win rate,
    profit factor, drawdown, etc. for whatever chart/timeframe you're on.
+   On the chart itself you get two live panels:
+   - A big **BUY / SELL / NEUTRAL button** at the top-center with its
+     **strength as a percentage** (0-100%, straight off the net score) —
+     the quick "what do I do right now" readout.
+   - A detailed data panel (top-right) breaking down every factor's
+     points, raw indicator readouts (RSI, MACD, ADX, relative volume,
+     ATR, % vs EMA200, 12-1mo momentum, HTF trend), the current
+     position's entry/stop/target/open P&L, and this exact chart's live
+     strategy history (closed trades, win rate, profit factor, net
+     profit, max drawdown) — computed directly from TradingView's own
+     Strategy Tester data, not a claim. Both panels can be toggled off
+     independently under **Settings → Display**.
 3. Open the **Settings** (gear icon) to tune thresholds, EMA lengths,
    risk-per-trade, or turn the higher-timeframe filter on/off — every
    input is grouped and labeled.
