@@ -113,6 +113,25 @@ and signal button, there's no Python equivalent since the Python side has
 no chart to draw on; `net_score` crossing the same threshold is trivially
 derivable from `compute_confluence()`'s output if a Python consumer needs it.
 
+### Manual trade planner (Pine-only, display feature)
+
+Pine has no click-to-query interactivity — a script can't react to "the user
+clicked this specific bar." The closest, more useful equivalent: a panel
+(bottom-right table, "IF YOU ENTER NOW") that's **always live** rather than
+click-triggered — it continuously shows what stop-loss, take-profit,
+suggested position size, dollar risk, and reward:risk ratio would be *if you
+entered long or short on the current bar right now*, using the exact same
+ATR-based formulas as the strategy's own real entries
+(`plannerLongSL`/`plannerLongTP`/`plannerShortSL`/`plannerShortTP`, computed
+from the current bar's `close`/`atrVal`, not tied to whether `longCondition`/
+`shortCondition` actually fired). Also plots small circle markers at the
+hypothetical stop/target levels on the current bar, but only while flat
+(`strategy.position_size == 0`) — an actual open position already draws its
+real stop/target as solid lines via `slPlotSeries`/`tpPlotSeries`, so this
+only shows when there's nothing to conflict with. Toggle: `showTradePlanner`
+input ("Manual Trade Planner" group). Pine-only, same reasoning as the
+dashboard table and signal button.
+
 ### Alert payloads (Pine-only)
 
 Every `alert()` call (entries, exits-via-score-fade, and the candle popup
