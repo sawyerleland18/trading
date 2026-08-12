@@ -97,6 +97,22 @@ threshold cross:
   shown on the TradingView dashboard table. This label reflects the score
   at all times and is independent of which trigger mode is active.
 
+### Candle BUY/SELL % popup (Pine-only, display feature)
+
+A label pops up directly on the candle the moment `net_score` crosses
+±`popupThreshold` (default 50%), reading e.g. `BUY 62%` or `SELL 58%` — a
+heads-up independent of whether the strategy's own gated trade trigger
+(above) actually fires on that bar. Uses `ta.crossover`/`ta.crossunder`
+against the threshold, so it fires once per crossing event rather than
+re-labeling every bar the score stays past the level. Also backs an
+`alertcondition()` pair ("CSS Score Crossed Bullish/Bearish Threshold") so
+it can drive a TradingView alert, separate from the trade-entry alerts.
+Toggle: `showPopupAlert` input; threshold: `popupThreshold` input (both in
+the "Candle BUY/SELL % Popup" group). Pine-only — like the dashboard table
+and signal button, there's no Python equivalent since the Python side has
+no chart to draw on; `net_score` crossing the same threshold is trivially
+derivable from `compute_confluence()`'s output if a Python consumer needs it.
+
 ### Multi-timeframe filter
 
 Both implementations optionally require the higher-timeframe trend (EMA

@@ -110,6 +110,10 @@ atrMultSL     = input.float(1.5, "ATR Stop-Loss Multiplier",   minval = 0.5, ste
 atrMultTP     = input.float(3.0, "ATR Take-Profit Multiplier", minval = 0.5, step = 0.1, group = grpRisk)
 riskPerTrade  = input.float(1.0, "Risk per Trade (% of equity)", minval = 0.1, step = 0.1, group = grpRisk)
 
+grpPopup = "Candle BUY/SELL % Popup"
+showPopupAlert = input.bool(true, "Show BUY/SELL Popup Label When Score Crosses Threshold", group = grpPopup)
+popupThreshold = input.int(50, "Popup Threshold (% net score, either direction)", minval = 1, maxval = 100, group = grpPopup)
+
 grpUI = "Display"
 showSignalButton = input.bool(true, "Show Big BUY/SELL Signal Button", group = grpUI)
 showDashboard    = input.bool(true, "Show Detailed Data Panel", group = grpUI)
@@ -266,6 +270,34 @@ if enableShort and shortCondition and strategy.position_size >= 0
          size = size.small, yloc = yloc.abovebar)
     alert("SELL " + syminfo.ticker + " | score=" + str.tostring(netScore, "#.0") + " | entry=" + str.tostring(close) +
          " | stop=" + str.tostring(shortSL) + " | target=" + str.tostring(shortTP), alert.freq_once_per_bar)
+
+// ------------------------- CANDLE BUY/SELL % POPUP -----------------------------
+// Independent of the strategy's own trade trigger above (which also requires
+// an EMA crossover and only fires on a flat-to-entry transition) - this fires
+// purely off net_score itself crossing +-popupThreshold, so you get a heads-up
+// the moment conviction gets strong even on bars where the strategy isn't
+// about to actually take a trade. Uses crossover/crossunder (not just "is
+// score currently past the level") so it fires once per crossing event
+// instead of re-labeling every single bar the score stays past the threshold.
+popupBuyEvent  = ta.crossover(netScore, popupThreshold)
+popupSellEvent = ta.crossunder(netScore, -popupThreshold)
+
+if showPopupAlert and popupBuyEvent and barstate.isconfirmed
+    label.new(bar_index, low, text = "BUY " + str.tostring(netScore, "#") + "%",
+         style = label.style_label_up, color = color.new(color.teal, 15), textcolor = color.white,
+         size = size.small, yloc = yloc.belowbar)
+    alert("SCORE ALERT: " + syminfo.ticker + " net score crossed above " + str.tostring(popupThreshold) +
+         "% bullish (now " + str.tostring(netScore, "#.0") + "%) at " + str.tostring(close), alert.freq_once_per_bar)
+
+if showPopupAlert and popupSellEvent and barstate.isconfirmed
+    label.new(bar_index, high, text = "SELL " + str.tostring(math.abs(netScore), "#") + "%",
+         style = label.style_label_down, color = color.new(color.orange, 15), textcolor = color.white,
+         size = size.small, yloc = yloc.abovebar)
+    alert("SCORE ALERT: " + syminfo.ticker + " net score crossed below -" + str.tostring(popupThreshold) +
+         "% bearish (now " + str.tostring(netScore, "#.0") + "%) at " + str.tostring(close), alert.freq_once_per_bar)
+
+alertcondition(popupBuyEvent,  title = "CSS Score Crossed Bullish Threshold", message = "Confluence Signal System: net score turned strongly BULLISH on {{ticker}} at {{close}}")
+alertcondition(popupSellEvent, title = "CSS Score Crossed Bearish Threshold", message = "Confluence Signal System: net score turned strongly BEARISH on {{ticker}} at {{close}}")
 
 if strategy.position_size > 0
     strategy.exit("Long Exit", "Long", stop = longSL, limit = longTP)
