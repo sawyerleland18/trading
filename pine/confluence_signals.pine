@@ -1,9 +1,9 @@
-// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © confluence-signal-system
+// This Pine Script(R) code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// (c) confluence-signal-system
 //@version=5
 
 // =============================================================================
-// CONFLUENCE SIGNAL SYSTEM — Multi-Factor Buy/Sell Engine
+// CONFLUENCE SIGNAL SYSTEM - Multi-Factor Buy/Sell Engine
 // -----------------------------------------------------------------------------
 // A rule-based, explainable "net score" (-100..+100) built from five weighted
 // factor groups (Trend, Momentum, Volume, Volatility Regime, Mean-Reversion).
@@ -18,7 +18,7 @@
 // See docs/ARCHITECTURE.md for the full scoring breakdown.
 // =============================================================================
 
-strategy("Confluence Signal System — Buy/Sell Engine", shorttitle = "CSS", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.percent, commission_value = 0.05, slippage = 1, pyramiding = 0, calc_on_every_tick = false, max_bars_back = 500)
+strategy("Confluence Signal System - Buy/Sell Engine", shorttitle = "CSS", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.percent, commission_value = 0.05, slippage = 1, pyramiding = 0, calc_on_every_tick = false, max_bars_back = 500)
 
 // ------------------------------- INPUTS -------------------------------------
 grpTrend = "Trend (weight 25)"
@@ -37,11 +37,11 @@ obvLookback = input.int(5,  "OBV Rising Lookback", minval = 1, group = grpVol)
 relVolLen   = input.int(20, "Relative Volume SMA", minval = 2, group = grpVol)
 relVolMult  = input.float(1.2, "Relative Volume Spike Multiplier", minval = 1.0, step = 0.1, group = grpVol)
 
-grpVola = "Volatility Regime — ADX (weight 15)"
+grpVola = "Volatility Regime - ADX (weight 15)"
 adxLen      = input.int(14, "ADX/DI Length", minval = 2, group = grpVola)
 adxThresh   = input.float(20, "ADX Trending Threshold", minval = 5, group = grpVola)
 
-grpBB = "Mean-Reversion — Bollinger (weight 15)"
+grpBB = "Mean-Reversion - Bollinger (weight 15)"
 bbLen       = input.int(20, "BB Length", minval = 5, group = grpBB)
 bbMult      = input.float(2.0, "BB StdDev Mult", minval = 0.5, step = 0.1, group = grpBB)
 
@@ -98,32 +98,32 @@ bbWidth = (bbUpper - bbLower) / bbMid
 
 atrVal = ta.atr(atrLen)
 
-// --------------------------- FACTOR 1: TREND (±25) ---------------------------
+// --------------------------- FACTOR 1: TREND (+/-25) ---------------------------
 trendPts = 0.0
 trendPts += close > emaFast ? 6 : -6
 trendPts += emaFast > emaMid ? 6 : -6
 trendPts += emaMid > emaSlow ? 7 : -7
 trendPts += close > emaSlow ? 6 : -6
 
-// -------------------------- FACTOR 2: MOMENTUM (±25) --------------------------
+// -------------------------- FACTOR 2: MOMENTUM (+/-25) --------------------------
 momentumPts = 0.0
 momentumPts += rsi > 50 ? 6 : -6
 momentumPts += rsi > rsi[1] ? 4 : -4
 momentumPts += macdLine > macdSig ? 8 : -8
 momentumPts += macdHist > macdHist[1] ? 7 : -7
 
-// --------------------------- FACTOR 3: VOLUME (±20) ---------------------------
+// --------------------------- FACTOR 3: VOLUME (+/-20) ---------------------------
 volumePts = 0.0
 volumePts += obv > obv[obvLookback] ? 10 : -10
 relVolSpike = volume > volSma * relVolMult
 volumePts += relVolSpike ? (close > open ? 10 : close < open ? -10 : 0) : 0
 
-// ----------------------- FACTOR 4: VOLATILITY REGIME (±15) --------------------
+// ----------------------- FACTOR 4: VOLATILITY REGIME (+/-15) --------------------
 trending = adx > adxThresh
 volaPts = 0.0
 volaPts += trending ? (diPlus > diMinus ? 15 : -15) : 0.0
 
-// ----------------------- FACTOR 5: MEAN-REVERSION / BB (±15) ------------------
+// ----------------------- FACTOR 5: MEAN-REVERSION / BB (+/-15) ------------------
 bbPts = 0.0
 breakoutUp   = close > bbUpper and bbWidth > bbWidth[1]
 breakoutDown = close < bbLower and bbWidth > bbWidth[1]
@@ -172,7 +172,7 @@ longQty  = longRiskDist  > 0 ? (strategy.equity * riskPerTrade / 100) / longRisk
 shortQty = shortRiskDist > 0 ? (strategy.equity * riskPerTrade / 100) / shortRiskDist : 0.0
 
 // Stop-loss / take-profit are locked in at the moment of entry (based on ATR
-// *at that bar*) and held fixed until the trade closes — they do NOT
+// *at that bar*) and held fixed until the trade closes - they do NOT
 // recalculate every bar. This is what you'd actually place as resting
 // stop/limit orders with your broker.
 var float longSL  = na
@@ -216,7 +216,7 @@ if strategy.position_size < 0
     if netScore > exitShortScore and barstate.isconfirmed
         strategy.close("Short", comment = "Score Fade")
 
-// Plotted SL/TP series: only visible while a position is actually open —
+// Plotted SL/TP series: only visible while a position is actually open -
 // derived from position_size rather than clearing longSL/shortSL directly,
 // so the fixed levels stay intact for strategy.exit() on the fill bar
 // (entries fill on the *next* bar, so position_size is still 0 on the
@@ -237,7 +237,7 @@ plotshape(longCondition,  title = "Buy Signal",  style = shape.triangleup,   loc
 plotshape(shortCondition, title = "Sell Signal", style = shape.triangledown, location = location.abovebar, color = color.new(color.red, 0),   size = size.small)
 
 // Stop-loss / take-profit levels for the currently open trade, drawn as
-// horizontal lines directly on the price chart — this is where to place
+// horizontal lines directly on the price chart - this is where to place
 // your actual stop and limit orders. Lines disappear once the trade closes.
 plot(slPlotSeries, title = "Stop Loss Level",   color = color.new(color.red, 0),   style = plot.style_linebr, linewidth = 2)
 plot(tpPlotSeries, title = "Take Profit Level", color = color.new(color.green, 0), style = plot.style_linebr, linewidth = 2)
@@ -274,19 +274,19 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 1, str.tostring(netScore, "#.0"), text_color = regimeColor())
     table.cell(dash, 0, 2, "Regime")
     table.cell(dash, 1, 2, regime(), text_color = regimeColor())
-    table.cell(dash, 0, 3, "Trend (±25)")
+    table.cell(dash, 0, 3, "Trend (+/-25)")
     table.cell(dash, 1, 3, str.tostring(trendPts, "#.0"))
-    table.cell(dash, 0, 4, "Momentum (±25)")
+    table.cell(dash, 0, 4, "Momentum (+/-25)")
     table.cell(dash, 1, 4, str.tostring(momentumPts, "#.0"))
-    table.cell(dash, 0, 5, "Volume (±20)")
+    table.cell(dash, 0, 5, "Volume (+/-20)")
     table.cell(dash, 1, 5, str.tostring(volumePts, "#.0"))
-    table.cell(dash, 0, 6, "Volatility (±15)")
+    table.cell(dash, 0, 6, "Volatility (+/-15)")
     table.cell(dash, 1, 6, str.tostring(volaPts, "#.0"))
-    table.cell(dash, 0, 7, "Mean-Rev (±15)")
+    table.cell(dash, 0, 7, "Mean-Rev (+/-15)")
     table.cell(dash, 1, 7, str.tostring(bbPts, "#.0"))
     table.cell(dash, 0, 8, "Position")
     table.cell(dash, 1, 8, positionLabel(), text_color = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver)
     table.cell(dash, 0, 9, "Stop Loss")
-    table.cell(dash, 1, 9, na(slPlotSeries) ? "—" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
+    table.cell(dash, 1, 9, na(slPlotSeries) ? "-" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
     table.cell(dash, 0, 10, "Take Profit")
-    table.cell(dash, 1, 10, na(tpPlotSeries) ? "—" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)
+    table.cell(dash, 1, 10, na(tpPlotSeries) ? "-" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)
