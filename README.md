@@ -12,21 +12,39 @@ for what's built and what's planned next.
 ## How it works
 
 Every bar gets a **net confluence score from -100 (max bearish) to +100
-(max bullish)**, built from five independently-weighted, fully explainable
+(max bullish)**, built from six independently-weighted, fully explainable
 factor groups:
 
 | Factor | Weight | Signal |
 |---|---|---|
-| Trend (EMA 20/50/200 stack) | ±25 | price/EMA alignment |
-| Momentum (RSI + MACD) | ±25 | level, slope, crossover |
-| Volume (OBV + relative volume) | ±20 | accumulation/distribution confirmation |
-| Volatility regime (ADX/DMI) | ±15 | only rewards trend signals when the market is actually trending |
-| Mean-reversion (Bollinger + RSI) | ±15 | breakout or contrarian bounce at the extremes |
+| Trend (EMA 20/50/200 stack) | ±20 | price/EMA alignment |
+| Momentum (RSI + MACD) | ±20 | level, slope, crossover |
+| Volume (OBV + relative volume) | ±15 | accumulation/distribution confirmation |
+| Volatility regime (ADX/DMI) | ±10 | only rewards trend signals when the market is actually trending |
+| Mean-reversion (Bollinger + RSI) | ±10 | breakout or contrarian bounce at the extremes |
+| **Long-Term Regime** (SMA200 timing + 12-1mo momentum) | **±25** | the single largest-weighted factor, built from two of the most heavily-published, out-of-sample-replicated rules in empirical finance rather than a discretionary indicator — see below |
 
-A **buy signal** fires when the score crosses above a threshold (default
-+40); a **sell/short signal** fires when it crosses below -40. Positions
-exit on an ATR-based stop-loss/take-profit or when the score fades back
-toward neutral. Full math and rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The BUY/SELL trigger fires on the exact bar an EMA crossover happens (so the
+label lands right on the candle you'd expect it on), gated by the
+confluence score already agreeing with that direction. Positions exit on
+an ATR-based stop-loss/take-profit or when the score fades back toward
+neutral. Full math and rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+### The evidence behind the Long-Term Regime factor
+
+Rather than adding a seventh discretionary indicator, the strongest factor
+in this model is built from results that have been tested across a century
+or more of real market data:
+
+- **200-day SMA trend timing** — Faber (2007/2013), tested back to 1901
+  across five asset classes; cuts drawdown roughly in half vs. buy-and-hold.
+- **12-1 month time-series momentum** — Jegadeesh & Titman (1993);
+  Moskowitz, Ooi & Pedersen (2012) across 58 futures markets over 25+
+  years; replicated across 8 markets by Asness, Moskowitz & Pedersen (2013)
+  and across **212 years** of data by Geczy & Samonov (2016).
+
+Full citations and the "why the biggest weight" rationale are in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Repository layout
 

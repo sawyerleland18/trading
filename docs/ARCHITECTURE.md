@@ -17,21 +17,56 @@ add a rule, we change it in both places (see the sync note at the bottom).
 ## The scoring model
 
 Every bar produces a **net score from -100 to +100**: positive means
-bullish confluence, negative means bearish. It's a sum of five independent
+bullish confluence, negative means bearish. It's a sum of six independent
 factor groups, each capped at a fixed weight so no single indicator can
 dominate the signal.
 
 | Factor group | Weight | What it measures | Bullish condition |
 |---|---|---|---|
-| **Trend** | ±25 | EMA stack (20/50/200) + price position | price above EMA20, EMA20 > EMA50, EMA50 > EMA200, price above EMA200 |
-| **Momentum** | ±25 | RSI level/slope + MACD | RSI > 50 and rising, MACD line above signal, MACD histogram rising |
-| **Volume** | ±20 | OBV trend + relative volume | OBV rising over N bars; a volume spike (> SMA × multiplier) confirms candle direction |
-| **Volatility regime** | ±15 | ADX / DMI | only rewards trend-following signals when ADX shows the market is actually trending; contributes 0 in chop |
-| **Mean-reversion** | ±15 | Bollinger Bands + RSI extremes | a volatility-expanding breakout beyond the bands, or a contrarian bounce setup at an extreme with RSI confirmation |
+| **Trend** | ±20 | EMA stack (20/50/200) + price position | price above EMA20, EMA20 > EMA50, EMA50 > EMA200, price above EMA200 |
+| **Momentum** | ±20 | RSI level/slope + MACD | RSI > 50 and rising, MACD line above signal, MACD histogram rising |
+| **Volume** | ±15 | OBV trend + relative volume | OBV rising over N bars; a volume spike (> SMA × multiplier) confirms candle direction |
+| **Volatility regime** | ±10 | ADX / DMI | only rewards trend-following signals when ADX shows the market is actually trending; contributes 0 in chop |
+| **Mean-reversion** | ±10 | Bollinger Bands + RSI extremes | a volatility-expanding breakout beyond the bands, or a contrarian bounce setup at an extreme with RSI confirmation |
+| **Long-Term Regime** | ±25 | 200-day SMA timing + 12-1 month time-series momentum | price above its long-term SMA, and trailing 12-month return (skipping the most recent month) is positive |
 
 Each factor is scored with simple, explainable boolean rules — deliberately
 not a black box. You can read `signals.py::compute_confluence` top to
 bottom and know exactly why the score is what it is on any given bar.
+
+### Why Long-Term Regime carries the biggest weight
+
+The first five factor groups are standard discretionary technical analysis
+rules — useful, but their evidence is mostly "traders have used this for
+decades," not controlled out-of-sample studies. The Long-Term Regime factor
+is different: it's built from two of the most heavily-published,
+independently-replicated results in empirical asset pricing, and it
+carries the single largest weight (±25) on purpose.
+
+1. **200-day SMA trend timing.** Mebane Faber, *"A Quantitative Approach to
+   Tactical Asset Allocation"* (2007, updated 2013) — a simple rule (hold
+   when price is above its 10-month/~200-day SMA, otherwise hold cash)
+   tested back to **1901** across five asset classes (US equities, foreign
+   equities, bonds, commodities, REITs) and found to cut max drawdown
+   roughly in half versus buy-and-hold with comparable or better returns.
+   It's one of the most replicated trend-timing results in the tactical
+   asset allocation literature.
+2. **12-1 month time-series momentum.** Jegadeesh & Titman (1993) first
+   documented that assets with strong trailing returns tend to keep
+   outperforming over the next 3-12 months. Moskowitz, Ooi & Pedersen,
+   *"Time Series Momentum"* (Journal of Financial Economics, 2012) found
+   the same effect testing 58 liquid futures markets (equity indices,
+   currencies, commodities, bonds) across 25+ years. Asness, Moskowitz &
+   Pedersen, *"Value and Momentum Everywhere"* (2013) replicated it across
+   8 different markets and asset classes going back decades, and Geczy &
+   Samonov, *"Two Centuries of Momentum"* (2016) found it holding across
+   **212 years** of data. The "12-1" construction (12-month lookback,
+   skipping the most recent month) is the standard form used in the
+   literature specifically because it avoids the well-documented
+   short-term reversal effect contaminating the signal.
+
+Everything else in this model is a discretionary confirmation layer around
+that long-term evidence base, not a replacement for it.
 
 ### Signal generation
 

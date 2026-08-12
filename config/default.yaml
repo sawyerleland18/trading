@@ -30,6 +30,17 @@ mean_reversion:
   bb_len: 20
   bb_mult: 2.0
 
+# Largest-weighted factor (25 of the 100 total points), built from two of
+# the most heavily-published, out-of-sample-replicated results in empirical
+# finance rather than a discretionary technical rule — see
+# docs/ARCHITECTURE.md "Why Long-Term Regime carries the biggest weight"
+# for citations (Faber 2007/2013; Jegadeesh & Titman 1993; Moskowitz, Ooi &
+# Pedersen 2012; Asness, Moskowitz & Pedersen 2013; Geczy & Samonov 2016).
+long_term_regime:
+  lt_sma_len: 200          # Faber tactical asset allocation SMA length
+  mom_lookback_bars: 252   # ~12 months of trading days
+  mom_skip_bars: 21        # ~1 month, skipped ("12-1" construction)
+
 signal_thresholds:
   buy_threshold: 40
   sell_threshold: -40

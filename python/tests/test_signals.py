@@ -4,7 +4,7 @@ from confluence.signals import ConfluenceParams, add_htf_filter, compute_conflue
 def test_compute_confluence_adds_expected_columns(ohlcv):
     out = compute_confluence(ohlcv)
     expected = {
-        "trend_pts", "momentum_pts", "volume_pts", "vola_pts", "bb_pts",
+        "trend_pts", "momentum_pts", "volume_pts", "vola_pts", "bb_pts", "long_term_pts",
         "net_score", "regime", "long_signal", "short_signal",
         "exit_long_signal", "exit_short_signal",
     }
@@ -19,11 +19,18 @@ def test_net_score_bounded(ohlcv):
 
 def test_component_scores_within_declared_weights(ohlcv):
     out = compute_confluence(ohlcv)
-    assert out["trend_pts"].abs().max() <= 25
-    assert out["momentum_pts"].abs().max() <= 25
-    assert out["volume_pts"].abs().max() <= 20
-    assert out["vola_pts"].abs().max() <= 15
-    assert out["bb_pts"].abs().max() <= 15
+    assert out["trend_pts"].abs().max() <= 20
+    assert out["momentum_pts"].abs().max() <= 20
+    assert out["volume_pts"].abs().max() <= 15
+    assert out["vola_pts"].abs().max() <= 10
+    assert out["bb_pts"].abs().max() <= 10
+    assert out["long_term_pts"].abs().max() <= 25
+
+
+def test_component_weights_sum_to_100():
+    """The declared per-factor weight caps must sum to exactly the net_score range."""
+    caps = {"trend": 20, "momentum": 20, "volume": 15, "vola": 10, "bb": 10, "long_term": 25}
+    assert sum(caps.values()) == 100
 
 
 def test_regime_matches_thresholds(ohlcv):
@@ -40,6 +47,15 @@ def test_uptrend_biases_score_positive(trending_ohlcv):
     tail = out["net_score"].dropna().iloc[-100:]
     assert tail.mean() > 0
     assert out["long_signal"].sum() >= 1
+
+
+def test_long_term_regime_positive_in_sustained_uptrend(trending_ohlcv):
+    """The SMA200-timing + 12-1mo momentum factor should lean bullish once
+    a sustained uptrend has had enough history to clear both lookbacks."""
+    out = compute_confluence(trending_ohlcv)
+    tail = out["long_term_pts"].dropna().iloc[-100:]
+    assert tail.mean() > 0
+    assert out["ts_momentum"].dropna().iloc[-100:].gt(0).mean() > 0.5
 
 
 def test_ema_cross_columns_exist_and_are_mutually_exclusive(ohlcv):

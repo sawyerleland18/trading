@@ -5,45 +5,68 @@
 // =============================================================================
 // CONFLUENCE SIGNAL SYSTEM - Multi-Factor Buy/Sell Engine
 // -----------------------------------------------------------------------------
-// A rule-based, explainable "net score" (-100..+100) built from five weighted
-// factor groups (Trend, Momentum, Volume, Volatility Regime, Mean-Reversion).
-// Crossing the score above/below configurable thresholds generates buy/sell
-// signals, drives an optional strategy backtest (Strategy Tester stats,
-// equity curve, win rate, profit factor), and fires alerts (both classic
-// alertcondition() and dynamic alert() calls suitable for webhook bots).
+// A rule-based, explainable "net score" (-100..+100) built from six weighted
+// factor groups (Trend, Momentum, Volume, Volatility Regime, Mean-Reversion,
+// and Long-Term Regime). Crossing the score above/below configurable
+// thresholds generates buy/sell signals, drives an optional strategy
+// backtest (Strategy Tester stats, equity curve, win rate, profit factor),
+// and fires alerts (both classic alertcondition() and dynamic alert()
+// calls suitable for webhook bots).
+//
+// The Long-Term Regime factor is deliberately built from two of the most
+// heavily-published, out-of-sample-replicated rules in empirical finance,
+// rather than another discretionary technical rule:
+//   - 200-day SMA trend timing (Faber, "A Quantitative Approach to
+//     Tactical Asset Allocation", 2007/2013) - tested back to 1901 across
+//     US equities, foreign equities, bonds, commodities and REITs.
+//   - 12-1 month time-series momentum (Jegadeesh & Titman 1993; Moskowitz,
+//     Ooi & Pedersen 2012, "Time Series Momentum", Journal of Financial
+//     Economics - 58 futures markets across 25+ years; replicated across
+//     8 asset classes/markets over more than a century by Asness,
+//     Moskowitz & Pedersen 2013, and over 212 years by Geczy & Samonov
+//     2016). It carries the single largest weight of any factor group on
+//     purpose, because it has the deepest evidence base behind it.
 //
 // This script is mirrored 1:1 (same weights, same rules) by the Python
 // package in python/confluence/ so the exact same logic can be backtested
 // across hundreds of tickers and years of history outside TradingView.
-// See docs/ARCHITECTURE.md for the full scoring breakdown.
+// See docs/ARCHITECTURE.md for the full scoring breakdown and citations.
 // =============================================================================
 
-strategy("Confluence Signal System - Buy/Sell Engine", shorttitle = "CSS", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.percent, commission_value = 0.05, slippage = 1, pyramiding = 0, calc_on_every_tick = false, max_bars_back = 500)
+strategy("Confluence Signal System - Buy/Sell Engine", shorttitle = "CSS", overlay = true, initial_capital = 10000, default_qty_type = strategy.fixed, default_qty_value = 1, commission_type = strategy.commission.percent, commission_value = 0.05, slippage = 1, pyramiding = 0, calc_on_every_tick = false, max_bars_back = 600)
 
 // ------------------------------- INPUTS -------------------------------------
-grpTrend = "Trend (weight 25)"
+grpTrend = "Trend (weight 20)"
 emaFastLen  = input.int(20,  "Fast EMA",   minval = 2, group = grpTrend)
 emaMidLen   = input.int(50,  "Mid EMA",    minval = 2, group = grpTrend)
 emaSlowLen  = input.int(200, "Slow EMA",   minval = 2, group = grpTrend)
 
-grpMom = "Momentum (weight 25)"
+grpMom = "Momentum (weight 20)"
 rsiLen      = input.int(14, "RSI Length", minval = 2, group = grpMom)
 macdFast    = input.int(12, "MACD Fast",  group = grpMom)
 macdSlow    = input.int(26, "MACD Slow",  group = grpMom)
 macdSignal  = input.int(9,  "MACD Signal", group = grpMom)
 
-grpVol = "Volume (weight 20)"
+grpVol = "Volume (weight 15)"
 obvLookback = input.int(5,  "OBV Rising Lookback", minval = 1, group = grpVol)
 relVolLen   = input.int(20, "Relative Volume SMA", minval = 2, group = grpVol)
 relVolMult  = input.float(1.2, "Relative Volume Spike Multiplier", minval = 1.0, step = 0.1, group = grpVol)
 
-grpVola = "Volatility Regime - ADX (weight 15)"
+grpVola = "Volatility Regime - ADX (weight 10)"
 adxLen      = input.int(14, "ADX/DI Length", minval = 2, group = grpVola)
 adxThresh   = input.float(20, "ADX Trending Threshold", minval = 5, group = grpVola)
 
-grpBB = "Mean-Reversion - Bollinger (weight 15)"
+grpBB = "Mean-Reversion - Bollinger (weight 10)"
 bbLen       = input.int(20, "BB Length", minval = 5, group = grpBB)
 bbMult      = input.float(2.0, "BB StdDev Mult", minval = 0.5, step = 0.1, group = grpBB)
+
+grpLT = "Long-Term Regime - SMA200 Timing + 12-1mo Momentum (weight 25)"
+ltSmaLen      = input.int(200, "Long-Term SMA Length", minval = 20, group = grpLT,
+     tooltip = "Faber (2007/2013) tactical asset allocation: price above/below its long-term SMA, tested back to 1901 across US equities, foreign equities, bonds, commodities and REITs.")
+momLookbackBars = input.int(252, "Momentum Lookback (bars, ~12 months)", minval = 20, group = grpLT,
+     tooltip = "Jegadeesh & Titman (1993); Moskowitz, Ooi & Pedersen (2012) 'Time Series Momentum': trailing 12-month return predicts the next period's direction, replicated across 58 futures markets, 8 asset classes, and (Geczy & Samonov 2016) 212 years of data.")
+momSkipBars     = input.int(21, "Momentum Skip-Recent (bars, ~1 month)", minval = 0, group = grpLT,
+     tooltip = "Skips the most recent ~month before measuring momentum, the standard '12-1' construction that avoids short-term mean-reversion contaminating the signal.")
 
 grpSig = "Signal Thresholds"
 buyThreshold    = input.int(40,  "Buy Threshold",          group = grpSig)
@@ -98,41 +121,53 @@ bbWidth = (bbUpper - bbLower) / bbMid
 
 atrVal = ta.atr(atrLen)
 
-// --------------------------- FACTOR 1: TREND (+/-25) ---------------------------
+ltSma = ta.sma(close, ltSmaLen)
+tsMomentum = close[momSkipBars] / close[momSkipBars + momLookbackBars] - 1
+
+// --------------------------- FACTOR 1: TREND (+/-20) ---------------------------
 trendPts = 0.0
-trendPts += close > emaFast ? 6 : -6
-trendPts += emaFast > emaMid ? 6 : -6
-trendPts += emaMid > emaSlow ? 7 : -7
-trendPts += close > emaSlow ? 6 : -6
+trendPts += close > emaFast ? 5 : -5
+trendPts += emaFast > emaMid ? 5 : -5
+trendPts += emaMid > emaSlow ? 5 : -5
+trendPts += close > emaSlow ? 5 : -5
 
-// -------------------------- FACTOR 2: MOMENTUM (+/-25) --------------------------
+// -------------------------- FACTOR 2: MOMENTUM (+/-20) --------------------------
 momentumPts = 0.0
-momentumPts += rsi > 50 ? 6 : -6
-momentumPts += rsi > rsi[1] ? 4 : -4
-momentumPts += macdLine > macdSig ? 8 : -8
-momentumPts += macdHist > macdHist[1] ? 7 : -7
+momentumPts += rsi > 50 ? 5 : -5
+momentumPts += rsi > rsi[1] ? 3 : -3
+momentumPts += macdLine > macdSig ? 7 : -7
+momentumPts += macdHist > macdHist[1] ? 5 : -5
 
-// --------------------------- FACTOR 3: VOLUME (+/-20) ---------------------------
+// --------------------------- FACTOR 3: VOLUME (+/-15) ---------------------------
 volumePts = 0.0
-volumePts += obv > obv[obvLookback] ? 10 : -10
+volumePts += obv > obv[obvLookback] ? 8 : -8
 relVolSpike = volume > volSma * relVolMult
-volumePts += relVolSpike ? (close > open ? 10 : close < open ? -10 : 0) : 0
+volumePts += relVolSpike ? (close > open ? 7 : close < open ? -7 : 0) : 0
 
-// ----------------------- FACTOR 4: VOLATILITY REGIME (+/-15) --------------------
+// ----------------------- FACTOR 4: VOLATILITY REGIME (+/-10) --------------------
 trending = adx > adxThresh
 volaPts = 0.0
-volaPts += trending ? (diPlus > diMinus ? 15 : -15) : 0.0
+volaPts += trending ? (diPlus > diMinus ? 10 : -10) : 0.0
 
-// ----------------------- FACTOR 5: MEAN-REVERSION / BB (+/-15) ------------------
+// ----------------------- FACTOR 5: MEAN-REVERSION / BB (+/-10) ------------------
 bbPts = 0.0
 breakoutUp   = close > bbUpper and bbWidth > bbWidth[1]
 breakoutDown = close < bbLower and bbWidth > bbWidth[1]
 bouncePotentialUp   = close <= bbLower and rsi < 30
 bouncePotentialDown = close >= bbUpper and rsi > 70
-bbPts += breakoutUp ? 15 : breakoutDown ? -15 : bouncePotentialUp ? 7 : bouncePotentialDown ? -7 : 0.0
+bbPts += breakoutUp ? 10 : breakoutDown ? -10 : bouncePotentialUp ? 5 : bouncePotentialDown ? -5 : 0.0
+
+// --------- FACTOR 6: LONG-TERM REGIME - SMA200 + 12-1mo Momentum (+/-25) --------
+// See the header comment / docs/ARCHITECTURE.md for citations. This is the
+// single largest-weighted factor because it's the one with the deepest,
+// most-replicated academic evidence behind it, not because it's the
+// "smartest" rule here.
+longTermPts = 0.0
+longTermPts += close > ltSma ? 12 : -12
+longTermPts += tsMomentum > 0 ? 13 : -13
 
 // ------------------------------ NET SCORE -------------------------------------
-netScore = trendPts + momentumPts + volumePts + volaPts + bbPts
+netScore = trendPts + momentumPts + volumePts + volaPts + bbPts + longTermPts
 
 // ---------------------------- MULTI-TIMEFRAME FILTER --------------------------
 [htfEmaFast, htfEmaSlow] = request.security(syminfo.tickerid, htfTF,
@@ -253,7 +288,7 @@ alertcondition(longCondition,  title = "CSS Buy Signal",  message = "Confluence 
 alertcondition(shortCondition, title = "CSS Sell Signal", message = "Confluence Signal System: SELL {{ticker}} at {{close}}")
 
 // ---------------------------------- DASHBOARD --------------------------------------
-var table dash = table.new(position.top_right, 2, 11, bgcolor = color.new(color.black, 20), border_width = 1)
+var table dash = table.new(position.top_right, 2, 12, bgcolor = color.new(color.black, 20), border_width = 1)
 
 regime() =>
     netScore >= strongBuyLevel ? "STRONG BUY" :
@@ -274,19 +309,21 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 1, str.tostring(netScore, "#.0"), text_color = regimeColor())
     table.cell(dash, 0, 2, "Regime")
     table.cell(dash, 1, 2, regime(), text_color = regimeColor())
-    table.cell(dash, 0, 3, "Trend (+/-25)")
+    table.cell(dash, 0, 3, "Trend (+/-20)")
     table.cell(dash, 1, 3, str.tostring(trendPts, "#.0"))
-    table.cell(dash, 0, 4, "Momentum (+/-25)")
+    table.cell(dash, 0, 4, "Momentum (+/-20)")
     table.cell(dash, 1, 4, str.tostring(momentumPts, "#.0"))
-    table.cell(dash, 0, 5, "Volume (+/-20)")
+    table.cell(dash, 0, 5, "Volume (+/-15)")
     table.cell(dash, 1, 5, str.tostring(volumePts, "#.0"))
-    table.cell(dash, 0, 6, "Volatility (+/-15)")
+    table.cell(dash, 0, 6, "Volatility (+/-10)")
     table.cell(dash, 1, 6, str.tostring(volaPts, "#.0"))
-    table.cell(dash, 0, 7, "Mean-Rev (+/-15)")
+    table.cell(dash, 0, 7, "Mean-Rev (+/-10)")
     table.cell(dash, 1, 7, str.tostring(bbPts, "#.0"))
-    table.cell(dash, 0, 8, "Position")
-    table.cell(dash, 1, 8, positionLabel(), text_color = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver)
-    table.cell(dash, 0, 9, "Stop Loss")
-    table.cell(dash, 1, 9, na(slPlotSeries) ? "-" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
-    table.cell(dash, 0, 10, "Take Profit")
-    table.cell(dash, 1, 10, na(tpPlotSeries) ? "-" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)
+    table.cell(dash, 0, 8, "LT Regime (+/-25)")
+    table.cell(dash, 1, 8, str.tostring(longTermPts, "#.0"))
+    table.cell(dash, 0, 9, "Position")
+    table.cell(dash, 1, 9, positionLabel(), text_color = strategy.position_size > 0 ? color.lime : strategy.position_size < 0 ? color.red : color.silver)
+    table.cell(dash, 0, 10, "Stop Loss")
+    table.cell(dash, 1, 10, na(slPlotSeries) ? "-" : str.tostring(slPlotSeries, format.mintick), text_color = color.red)
+    table.cell(dash, 0, 11, "Take Profit")
+    table.cell(dash, 1, 11, na(tpPlotSeries) ? "-" : str.tostring(tpPlotSeries, format.mintick), text_color = color.lime)

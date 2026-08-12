@@ -1,9 +1,24 @@
 """Confluence scoring model — the Python mirror of pine/confluence_signals.pine.
 
-The five weighted factor groups and their point values are kept identical
+The six weighted factor groups and their point values are kept identical
 to the Pine script on purpose. If you change a weight or a rule in one
 place, change it in the other — see docs/ARCHITECTURE.md for the full
 breakdown table that both implementations must agree with.
+
+Factor 6 ("Long-Term Regime") is deliberately built from two of the most
+heavily-published, out-of-sample-replicated rules in empirical finance
+rather than another discretionary indicator:
+
+  - 200-day SMA trend timing (Faber, "A Quantitative Approach to Tactical
+    Asset Allocation", 2007/2013) — tested back to 1901 across US equities,
+    foreign equities, bonds, commodities and REITs.
+  - 12-1 month time-series momentum (Jegadeesh & Titman 1993; Moskowitz,
+    Ooi & Pedersen 2012, "Time Series Momentum", JFE — 58 futures markets
+    across 25+ years; replicated across 8 asset classes/markets over more
+    than a century by Asness, Moskowitz & Pedersen 2013 and over 212 years
+    by Geczy & Samonov 2016).
+
+See docs/ARCHITECTURE.md for citations and the full weight table.
 """
 from __future__ import annotations
 
@@ -36,6 +51,10 @@ class ConfluenceParams:
     # Mean reversion / Bollinger
     bb_len: int = 20
     bb_mult: float = 2.0
+    # Long-term regime (SMA200 timing + 12-1 month time-series momentum)
+    lt_sma_len: int = 200
+    mom_lookback_bars: int = 252  # ~12 months of trading days
+    mom_skip_bars: int = 21       # ~1 month, skipped to avoid short-term reversal
     # Signal thresholds
     buy_threshold: float = 40.0
     sell_threshold: float = -40.0
@@ -80,8 +99,8 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
     A copy of df with the following columns appended:
         ema_fast, ema_mid, ema_slow, rsi, macd_line, macd_signal, macd_hist,
         obv, rel_vol_sma, plus_di, minus_di, adx, bb_mid, bb_upper, bb_lower, bb_width,
-        atr, trend_pts, momentum_pts, volume_pts, vola_pts, bb_pts, net_score,
-        regime, long_signal, short_signal
+        atr, lt_sma, ts_momentum, trend_pts, momentum_pts, volume_pts, vola_pts,
+        bb_pts, long_term_pts, net_score, regime, long_signal, short_signal
     """
     _validate(df)
     p = params or ConfluenceParams()
@@ -108,50 +127,70 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
 
     out["atr"] = ind.atr(high, low, close, p.atr_len)
 
-    # ---- Factor 1: Trend (+-25) ----
+    lt_sma = ind.sma(close, p.lt_sma_len)
+    out["lt_sma"] = lt_sma
+    mom_ref_recent = close.shift(p.mom_skip_bars)
+    mom_ref_past = close.shift(p.mom_skip_bars + p.mom_lookback_bars)
+    ts_momentum = mom_ref_recent / mom_ref_past - 1
+    out["ts_momentum"] = ts_momentum
+
+    # ---- Factor 1: Trend (+-20) ----
     trend_pts = (
-        np.where(close > out["ema_fast"], 6, -6)
-        + np.where(out["ema_fast"] > out["ema_mid"], 6, -6)
-        + np.where(out["ema_mid"] > out["ema_slow"], 7, -7)
-        + np.where(close > out["ema_slow"], 6, -6)
+        np.where(close > out["ema_fast"], 5, -5)
+        + np.where(out["ema_fast"] > out["ema_mid"], 5, -5)
+        + np.where(out["ema_mid"] > out["ema_slow"], 5, -5)
+        + np.where(close > out["ema_slow"], 5, -5)
     )
     out["trend_pts"] = trend_pts.astype(float)
 
-    # ---- Factor 2: Momentum (+-25) ----
+    # ---- Factor 2: Momentum (+-20) ----
     momentum_pts = (
-        np.where(out["rsi"] > 50, 6, -6)
-        + np.where(out["rsi"] > out["rsi"].shift(1), 4, -4)
-        + np.where(out["macd_line"] > out["macd_signal"], 8, -8)
-        + np.where(out["macd_hist"] > out["macd_hist"].shift(1), 7, -7)
+        np.where(out["rsi"] > 50, 5, -5)
+        + np.where(out["rsi"] > out["rsi"].shift(1), 3, -3)
+        + np.where(out["macd_line"] > out["macd_signal"], 7, -7)
+        + np.where(out["macd_hist"] > out["macd_hist"].shift(1), 5, -5)
     )
     out["momentum_pts"] = momentum_pts.astype(float)
 
-    # ---- Factor 3: Volume (+-20) ----
+    # ---- Factor 3: Volume (+-15) ----
     obv_rising = out["obv"] > out["obv"].shift(p.obv_lookback)
     rel_vol_spike = volume > (out["rel_vol_sma"] * p.rel_vol_mult)
-    vol_direction = np.where(close > open_, 10, np.where(close < open_, -10, 0))
-    volume_pts = np.where(obv_rising, 10, -10) + np.where(rel_vol_spike, vol_direction, 0)
+    vol_direction = np.where(close > open_, 7, np.where(close < open_, -7, 0))
+    volume_pts = np.where(obv_rising, 8, -8) + np.where(rel_vol_spike, vol_direction, 0)
     out["volume_pts"] = volume_pts.astype(float)
 
-    # ---- Factor 4: Volatility regime via ADX (+-15) ----
+    # ---- Factor 4: Volatility regime via ADX (+-10) ----
     trending = out["adx"] > p.adx_thresh
-    vola_pts = np.where(trending, np.where(out["plus_di"] > out["minus_di"], 15, -15), 0)
+    vola_pts = np.where(trending, np.where(out["plus_di"] > out["minus_di"], 10, -10), 0)
     out["vola_pts"] = vola_pts.astype(float)
 
-    # ---- Factor 5: Mean-reversion / Bollinger (+-15) ----
+    # ---- Factor 5: Mean-reversion / Bollinger (+-10) ----
     breakout_up = (close > out["bb_upper"]) & (out["bb_width"] > out["bb_width"].shift(1))
     breakout_down = (close < out["bb_lower"]) & (out["bb_width"] > out["bb_width"].shift(1))
     bounce_up = (close <= out["bb_lower"]) & (out["rsi"] < 30)
     bounce_down = (close >= out["bb_upper"]) & (out["rsi"] > 70)
     bb_pts = np.select(
         [breakout_up, breakout_down, bounce_up, bounce_down],
-        [15, -15, 7, -7],
+        [10, -10, 5, -5],
         default=0,
     )
     out["bb_pts"] = bb_pts.astype(float)
 
+    # ---- Factor 6: Long-Term Regime — SMA200 timing + 12-1mo momentum (+-25) ----
+    # The single largest weight of any factor group, on purpose: this is the
+    # component with the deepest, most-replicated academic evidence behind
+    # it (see module docstring for citations) rather than a discretionary
+    # technical rule.
+    long_term_pts = np.where(close > lt_sma, 12, -12) + np.where(ts_momentum > 0, 13, -13)
+    out["long_term_pts"] = long_term_pts.astype(float)
+
     out["net_score"] = (
-        out["trend_pts"] + out["momentum_pts"] + out["volume_pts"] + out["vola_pts"] + out["bb_pts"]
+        out["trend_pts"]
+        + out["momentum_pts"]
+        + out["volume_pts"]
+        + out["vola_pts"]
+        + out["bb_pts"]
+        + out["long_term_pts"]
     )
 
     out["regime"] = np.select(
