@@ -49,12 +49,19 @@ def run_backtest(
     allow_short: bool = True,
     commission_pct: float = 0.05,
     use_htf_filter: bool = False,
+    use_regime_filter: bool = False,
 ) -> tuple[pd.Series, list[Trade]]:
     """Run the confluence strategy over `df` (raw OHLCV) and return (equity_curve, trades).
 
     df must have open/high/low/close/volume columns and a sorted datetime index.
     Signals are computed internally via compute_confluence (and add_htf_filter
     if use_htf_filter is True) so callers just need to pass raw price data.
+
+    use_regime_filter=True vetoes new entries against the Long-Term Regime
+    factor's direction (200-SMA + 12-1mo momentum) — no new shorts while
+    that regime reads bullish, no new longs while it reads bearish. See
+    docs/BACKTEST_RESULTS.md for why: without this, the system took nearly
+    as many shorts as longs on SPY through an 11-year bull market.
     """
     p = params or ConfluenceParams()
     data = compute_confluence(df, p)
@@ -122,11 +129,14 @@ def run_backtest(
             risk_dist = row["atr"] * p.atr_mult_sl
             qty = (risk_dollars / risk_dist) if risk_dist > 0 else 0.0
 
-            if allow_long and row["long_signal"] and row["htf_bullish"] and qty > 0:
+            regime_long_ok = (not use_regime_filter) or row["regime_bullish"]
+            regime_short_ok = (not use_regime_filter) or row["regime_bearish"]
+
+            if allow_long and row["long_signal"] and row["htf_bullish"] and regime_long_ok and qty > 0:
                 fee = abs(row["close"] * qty) * (commission_pct / 100)
                 cash -= fee
                 position = Trade(side="long", entry_date=ts, entry_price=row["close"], qty=qty)
-            elif allow_short and row["short_signal"] and row["htf_bearish"] and qty > 0:
+            elif allow_short and row["short_signal"] and row["htf_bearish"] and regime_short_ok and qty > 0:
                 fee = abs(row["close"] * qty) * (commission_pct / 100)
                 cash -= fee
                 position = Trade(side="short", entry_date=ts, entry_price=row["close"], qty=qty)

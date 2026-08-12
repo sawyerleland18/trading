@@ -33,6 +33,7 @@ def grid_search(
     param_grid: dict[str, list],
     base_params: ConfluenceParams | None = None,
     initial_capital: float = 10_000.0,
+    use_regime_filter: bool = False,
 ) -> pd.DataFrame:
     """Try every combination in param_grid (dict of field_name -> list of values).
 
@@ -47,7 +48,9 @@ def grid_search(
     for combo in itertools.product(*param_grid.values()):
         overrides = dict(zip(keys, combo))
         params = replace(base, **overrides)
-        equity, trades = run_backtest(df, params=params, initial_capital=initial_capital)
+        equity, trades = run_backtest(
+            df, params=params, initial_capital=initial_capital, use_regime_filter=use_regime_filter
+        )
         trade_df = trades_to_frame(trades)
         pnl_pct = trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float)
         summary = summarize(equity, pnl_pct)
@@ -63,6 +66,7 @@ def walk_forward(
     n_folds: int = 4,
     base_params: ConfluenceParams | None = None,
     initial_capital: float = 10_000.0,
+    use_regime_filter: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     """Sequential walk-forward: fold i is in-sample, fold i+1 is out-of-sample.
 
@@ -82,7 +86,10 @@ def walk_forward(
         if len(in_sample) < 100 or len(out_sample) < 50:
             continue
 
-        is_results = grid_search(in_sample, param_grid, base_params=base, initial_capital=initial_capital)
+        is_results = grid_search(
+            in_sample, param_grid, base_params=base, initial_capital=initial_capital,
+            use_regime_filter=use_regime_filter,
+        )
         if is_results.empty:
             continue
         keys = list(param_grid.keys())
@@ -90,7 +97,10 @@ def walk_forward(
         overrides = {k: best_row[k] for k in keys}
         best_params = replace(base, **overrides)
 
-        oos_equity, oos_trades = run_backtest(out_sample, params=best_params, initial_capital=initial_capital)
+        oos_equity, oos_trades = run_backtest(
+            out_sample, params=best_params, initial_capital=initial_capital,
+            use_regime_filter=use_regime_filter,
+        )
         oos_trade_df = trades_to_frame(oos_trades)
         oos_pnl = oos_trade_df["pnl_pct"] if len(oos_trade_df) else pd.Series(dtype=float)
         oos_summary = summarize(oos_equity, oos_pnl)

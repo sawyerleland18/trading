@@ -82,6 +82,9 @@ grpHTF = "Multi-Timeframe Filter"
 useHtfFilter = input.bool(true, "Require Higher-Timeframe Trend Alignment", group = grpHTF)
 htfTF        = input.timeframe("240", "Higher Timeframe", group = grpHTF)
 
+grpRegime = "Long-Term Regime Filter"
+useRegimeFilter = input.bool(true, "Veto Counter-Trend Entries (SMA200 + 12-1mo Momentum)", group = grpRegime)
+
 grpRisk = "Risk Management"
 enableLong    = input.bool(true, "Enable Long Trades",  group = grpRisk)
 enableShort   = input.bool(true, "Enable Short Trades", group = grpRisk)
@@ -190,8 +193,15 @@ useEmaCrossTrigger = triggerMode == "EMA Crossover + Confluence"
 longTrigger  = useEmaCrossTrigger ? (emaCrossUp and netScore >= emaConfirmScore)    : ta.crossover(netScore, buyThreshold)
 shortTrigger = useEmaCrossTrigger ? (emaCrossDown and netScore <= -emaConfirmScore) : ta.crossunder(netScore, sellThreshold)
 
-longCondition  = longTrigger  and (not useHtfFilter or htfBullish) and barstate.isconfirmed
-shortCondition = shortTrigger and (not useHtfFilter or htfBearish) and barstate.isconfirmed
+// Regime gate: don't take a new short while the SMA200/12-1mo momentum
+// regime is bullish, and vice versa for longs. Added after real-data
+// backtesting showed the system taking near-equal long/short trades on
+// SPY through an 11-year bull market (see docs/BACKTEST_RESULTS.md).
+regimeBullish = longTermPts > 0
+regimeBearish = longTermPts < 0
+
+longCondition  = longTrigger  and (not useHtfFilter or htfBullish) and (not useRegimeFilter or regimeBullish) and barstate.isconfirmed
+shortCondition = shortTrigger and (not useHtfFilter or htfBearish) and (not useRegimeFilter or regimeBearish) and barstate.isconfirmed
 
 longRiskDist  = atrVal * atrMultSL
 shortRiskDist = atrVal * atrMultSL
@@ -308,6 +318,7 @@ emaVsSlowPct = emaSlow != 0 ? (close - emaSlow) / emaSlow * 100 : na
 emaVsSlowText = na(emaVsSlowPct) ? "-" : str.tostring(emaVsSlowPct, "#.00") + "%"
 momText = na(tsMomentum) ? "-" : str.tostring(tsMomentum * 100, "#.0") + "%"
 htfTrendText = htfBullish ? "BULLISH" : htfBearish ? "BEARISH" : "FLAT"
+regimeText = regimeBullish ? "BULLISH" : regimeBearish ? "BEARISH" : "FLAT"
 
 closedTrades = strategy.closedtrades
 winRatePct = closedTrades > 0 ? (strategy.wintrades / closedTrades) * 100 : na
@@ -331,7 +342,7 @@ if showSignalButton and barstate.islast
     table.cell(signalBox, 0, 1, "STRENGTH " + strengthText, text_size = size.large, text_color = color.white, bgcolor = color.new(color.black, 20))
 
 // --------------------------- DETAILED DATA PANEL -------------------------------------
-var table dash = table.new(position.top_right, 2, 32, bgcolor = color.new(color.black, 20), border_width = 1)
+var table dash = table.new(position.top_right, 2, 33, bgcolor = color.new(color.black, 20), border_width = 1)
 sectionBg = color.new(color.blue, 60)
 
 if showDashboard and barstate.islast
@@ -377,29 +388,31 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 18, momText, text_size = size.small)
     table.cell(dash, 0, 19, "HTF Trend", text_size = size.small)
     table.cell(dash, 1, 19, htfTrendText, text_size = size.small)
+    table.cell(dash, 0, 20, "Regime Filter", text_size = size.small)
+    table.cell(dash, 1, 20, regimeText, text_size = size.small)
 
-    table.cell(dash, 0, 20, "POSITION", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 1, 20, "", bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 0, 21, "Position", text_size = size.small)
-    table.cell(dash, 1, 21, positionText, text_color = positionColor, text_size = size.small)
-    table.cell(dash, 0, 22, "Entry Price", text_size = size.small)
-    table.cell(dash, 1, 22, entryPriceText, text_size = size.small)
-    table.cell(dash, 0, 23, "Stop Loss", text_size = size.small)
-    table.cell(dash, 1, 23, slText, text_color = color.red, text_size = size.small)
-    table.cell(dash, 0, 24, "Take Profit", text_size = size.small)
-    table.cell(dash, 1, 24, tpText, text_color = color.lime, text_size = size.small)
-    table.cell(dash, 0, 25, "Open P/L", text_size = size.small)
-    table.cell(dash, 1, 25, openPlText, text_color = openPlColor, text_size = size.small)
+    table.cell(dash, 0, 21, "POSITION", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 21, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 22, "Position", text_size = size.small)
+    table.cell(dash, 1, 22, positionText, text_color = positionColor, text_size = size.small)
+    table.cell(dash, 0, 23, "Entry Price", text_size = size.small)
+    table.cell(dash, 1, 23, entryPriceText, text_size = size.small)
+    table.cell(dash, 0, 24, "Stop Loss", text_size = size.small)
+    table.cell(dash, 1, 24, slText, text_color = color.red, text_size = size.small)
+    table.cell(dash, 0, 25, "Take Profit", text_size = size.small)
+    table.cell(dash, 1, 25, tpText, text_color = color.lime, text_size = size.small)
+    table.cell(dash, 0, 26, "Open P/L", text_size = size.small)
+    table.cell(dash, 1, 26, openPlText, text_color = openPlColor, text_size = size.small)
 
-    table.cell(dash, 0, 26, "STRATEGY HISTORY (this chart)", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 1, 26, "", bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 0, 27, "Closed Trades", text_size = size.small)
-    table.cell(dash, 1, 27, str.tostring(closedTrades, "#"), text_size = size.small)
-    table.cell(dash, 0, 28, "Win Rate", text_size = size.small)
-    table.cell(dash, 1, 28, winRateText, text_size = size.small)
-    table.cell(dash, 0, 29, "Profit Factor", text_size = size.small)
-    table.cell(dash, 1, 29, pfText, text_size = size.small)
-    table.cell(dash, 0, 30, "Net Profit", text_size = size.small)
-    table.cell(dash, 1, 30, netProfitText, text_color = netProfitColor, text_size = size.small)
-    table.cell(dash, 0, 31, "Max Drawdown", text_size = size.small)
-    table.cell(dash, 1, 31, maxDDText, text_color = color.red, text_size = size.small)
+    table.cell(dash, 0, 27, "STRATEGY HISTORY (this chart)", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 27, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 28, "Closed Trades", text_size = size.small)
+    table.cell(dash, 1, 28, str.tostring(closedTrades, "#"), text_size = size.small)
+    table.cell(dash, 0, 29, "Win Rate", text_size = size.small)
+    table.cell(dash, 1, 29, winRateText, text_size = size.small)
+    table.cell(dash, 0, 30, "Profit Factor", text_size = size.small)
+    table.cell(dash, 1, 30, pfText, text_size = size.small)
+    table.cell(dash, 0, 31, "Net Profit", text_size = size.small)
+    table.cell(dash, 1, 31, netProfitText, text_color = netProfitColor, text_size = size.small)
+    table.cell(dash, 0, 32, "Max Drawdown", text_size = size.small)
+    table.cell(dash, 1, 32, maxDDText, text_color = color.red, text_size = size.small)

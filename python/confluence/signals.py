@@ -183,6 +183,15 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
     # technical rule.
     long_term_pts = np.where(close > lt_sma, 12, -12) + np.where(ts_momentum > 0, 13, -13)
     out["long_term_pts"] = long_term_pts.astype(float)
+    # Regime gate derived from the same factor: when the 200-SMA/momentum
+    # regime agrees with a direction (long_term_pts strictly positive or
+    # negative — it's never exactly 0 given the +-12/+-13 point values),
+    # `run_backtest(use_regime_filter=True)` vetoes new entries against it.
+    # See docs/BACKTEST_RESULTS.md — real-data testing showed the system
+    # taking near-equal long/short trades on SPY through a sustained bull
+    # market (15 short vs 12 long) without this gate.
+    out["regime_bullish"] = out["long_term_pts"] > 0
+    out["regime_bearish"] = out["long_term_pts"] < 0
 
     out["net_score"] = (
         out["trend_pts"]

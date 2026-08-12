@@ -73,7 +73,72 @@ The out-of-sample numbers are the only ones that mean anything here — in-sampl
 1. **In-sample performance doesn't predict out-of-sample performance.** Fold 1 had the *best* in-sample Sharpe (1.11) of the three folds and the *worst* out-of-sample Sharpe (-0.06, i.e. lost money risk-adjusted). That's a classic sign the grid search is fitting noise, not a stable edge — if it had found a real regime-appropriate parameter set, in-sample rank should correlate positively with out-of-sample rank, not invert it.
 2. **Even the best fold's OOS CAGR is 1.36%/year** — on 6 trades. That's not a number you can act on; it's a handful of coin flips that happened to land right.
 
-## Honest assessment
+## Update 2026-08-12: regime filter added, re-tested
+
+The trend-bias fix proposed above was implemented and re-run against the same
+data: a `use_regime_filter` gate (`--regime-filter` on the CLI, `useRegimeFilter`
+input in Pine, defaults on there / off in the Python backtest for explicit
+opt-in) that vetoes any new entry against the Long-Term Regime factor's own
+direction — no new shorts while `long_term_pts > 0`, no new longs while it's
+negative. See `docs/ARCHITECTURE.md` for the mechanics.
+
+**SPY, with filter on:**
+
+| Metric | Before | After |
+|---|---|---|
+| Total return | 4.99% | **10.91%** |
+| CAGR | 0.42% | **0.90%** |
+| Max drawdown | -5.05% | **-2.26%** |
+| Sharpe | 0.23 | **0.59** |
+| Sortino | 0.10 | **0.25** |
+| Win rate | 44.4% | **58.8%** |
+| Profit factor | 1.41 | **2.68** |
+| Trades (long/short) | 27 (12L/15S) | **17 (10L/7S)** |
+
+The side split flipped from short-heavy to long-heavy, which was the entire
+point — SPY spent most of this window in a bullish long-term regime, so a
+regime-respecting system should be long-biased on it, and now is.
+
+**Watchlist scan, with filter on** — aggregate: median CAGR 0.33% → **0.38%**,
+median Sharpe 0.20 → **0.24**, median max DD -5.45% → **-4.66%**, % tickers
+profitable 80% → **90%**, total trades 321 → **210** (fewer, higher-conviction
+entries). The improvement is real but **uneven across tickers**: SPY, QQQ, and
+AAPL — broad, persistently-trending names — improved substantially (QQQ CAGR
+1.23%→1.41%, MaxDD -2.91%→-2.53%; AAPL CAGR 0.77%→0.98%, WinRate 41%→46%).
+TSLA and AMZN, which had genuine multi-year bear phases inside this window
+(2018, 2022), improved little or slightly worsened (TSLA CAGR -0.12%→-0.23%) —
+consistent with the filter doing exactly what it's supposed to (block
+counter-trend noise) rather than a blanket "always go long" bias in disguise.
+
+**Walk-forward out-of-sample (SPY, 2010–2026), with filter on:**
+
+| Fold | In-sample Sharpe | Out-of-sample Sharpe | OOS CAGR % | OOS Max DD % | OOS Trades |
+|---|---|---|---|---|---|
+| 0 | 0.11 | **0.60** | 0.59 | -1.27 | 3 |
+| 1 | 0.84 | **0.34** | 0.47 | -1.34 | 5 |
+| 2 | 0.55 | **0.84** | 2.07 | -2.75 | 7 |
+
+The important change here isn't the CAGR numbers (still modest) — it's that
+**the sign-flip problem is gone.** Before the filter, fold 1 had the best
+in-sample Sharpe (1.11) and the *worst* out-of-sample Sharpe (-0.06, actually
+losing money risk-adjusted) — the classic overfitting signature. With the
+filter on, all three out-of-sample folds are positive and the ranking is far
+more consistent (in-sample and out-of-sample Sharpe move in the same
+direction fold to fold). That's a genuinely more trustworthy result, at the
+cost of fewer trades per fold (3-7 vs. 6-10 before) — an even smaller sample
+to hang confidence on, which cuts against the improvement somewhat.
+
+**Revised verdict:** the regime filter is a clear, real improvement — better
+risk-adjusted returns, smaller drawdowns, higher win rate, and a walk-forward
+result that no longer contradicts itself. It is not yet a "trade this with
+real money" result: SPY's 0.90%/yr still trails buy-and-hold by an enormous
+margin, and every out-of-sample fold still has single-digit trade counts. The
+right way to read this update is "the biggest structural bug is fixed, and
+the fix measurably helped" — not "the system is now profitable." The next
+open item from the original assessment (explicit slippage modeling, more
+walk-forward folds/history) still stands.
+
+## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:
 

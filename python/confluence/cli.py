@@ -34,7 +34,10 @@ def _print_summary(title: str, summary: dict) -> None:
 def cmd_backtest(args: argparse.Namespace) -> None:
     df = load_ohlcv(args.ticker, start=args.start, end=args.end, force_refresh=args.refresh)
     params = ConfluenceParams()
-    equity, trades = run_backtest(df, params=params, initial_capital=args.capital, use_htf_filter=args.htf)
+    equity, trades = run_backtest(
+        df, params=params, initial_capital=args.capital,
+        use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
+    )
     trade_df = trades_to_frame(trades)
     summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))
     _print_summary(f"Backtest: {args.ticker}", summary)
@@ -45,7 +48,10 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
 def cmd_scan(args: argparse.Namespace) -> None:
     tickers = load_watchlist(args.watchlist)
-    result = run_watchlist(tickers, start=args.start, end=args.end, use_htf_filter=args.htf)
+    result = run_watchlist(
+        tickers, start=args.start, end=args.end,
+        use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
+    )
     if result.empty:
         print("No results.")
         return
@@ -66,7 +72,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         "atr_mult_sl": [1.0, 1.5, 2.0],
         "atr_mult_tp": [2.0, 3.0, 4.0],
     }
-    folds, best_params = walk_forward(df, grid, n_folds=args.folds)
+    folds, best_params = walk_forward(df, grid, n_folds=args.folds, use_regime_filter=args.regime_filter)
     pd.set_option("display.width", 200)
     print(folds)
     print("\nFinal recommended params (from last fold's best in-sample fit):")
@@ -83,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--end", default=None)
     bt.add_argument("--capital", type=float, default=10_000.0)
     bt.add_argument("--htf", action="store_true", help="Enable higher-timeframe trend filter")
+    bt.add_argument(
+        "--regime-filter", action="store_true",
+        help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
+    )
     bt.add_argument("--refresh", action="store_true", help="Bypass cache and re-download")
     bt.add_argument("--out", default=None, help="CSV path to save the trade log")
     bt.set_defaults(func=cmd_backtest)
@@ -92,6 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--start", default="2015-01-01")
     scan.add_argument("--end", default=None)
     scan.add_argument("--htf", action="store_true")
+    scan.add_argument(
+        "--regime-filter", action="store_true",
+        help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
+    )
     scan.add_argument("--out", default=None, help="CSV path to save the summary table")
     scan.set_defaults(func=cmd_scan)
 
@@ -100,6 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument("--start", default="2010-01-01")
     opt.add_argument("--end", default=None)
     opt.add_argument("--folds", type=int, default=4)
+    opt.add_argument(
+        "--regime-filter", action="store_true",
+        help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
+    )
     opt.add_argument("--refresh", action="store_true")
     opt.set_defaults(func=cmd_optimize)
 

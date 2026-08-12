@@ -54,3 +54,28 @@ def test_custom_params_change_trade_count(ohlcv):
     _, loose_trades = run_backtest(ohlcv, params=loose)
     _, strict_trades = run_backtest(ohlcv, params=strict)
     assert len(loose_trades) >= len(strict_trades)
+
+
+def test_regime_filter_blocks_entries_against_the_long_term_trend(trending_ohlcv):
+    # trending_ohlcv has a strong positive drift, so after the 200-SMA/
+    # momentum warmup period the long-term regime should read bullish for
+    # most of the series — the filter should veto (or at least sharply cut)
+    # new shorts relative to running with it off.
+    from confluence.signals import compute_confluence
+
+    _, unfiltered_trades = run_backtest(trending_ohlcv, use_regime_filter=False)
+    _, filtered_trades = run_backtest(trending_ohlcv, use_regime_filter=True)
+
+    computed = compute_confluence(trending_ohlcv)
+    bullish_share = computed["regime_bullish"].dropna().mean()
+    assert bullish_share > 0.5  # sanity check on the fixture's own drift
+
+    unfiltered_shorts = sum(1 for t in unfiltered_trades if t.side == "short")
+    filtered_shorts = sum(1 for t in filtered_trades if t.side == "short")
+    assert filtered_shorts <= unfiltered_shorts
+
+    # Every trade that *does* enter under the filter must agree with the
+    # long-term regime reading at its own entry bar.
+    for t in filtered_trades:
+        bullish_at_entry = computed.loc[t.entry_date, "regime_bullish"]
+        assert bullish_at_entry if t.side == "long" else not bullish_at_entry

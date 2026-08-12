@@ -23,6 +23,7 @@ def run_watchlist(
     params: ConfluenceParams | None = None,
     initial_capital: float = 10_000.0,
     use_htf_filter: bool = False,
+    use_regime_filter: bool = False,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Backtest every ticker in `tickers` and return a summary DataFrame, one row per ticker.
@@ -40,7 +41,8 @@ def run_watchlist(
                     print(f"[skip] {ticker}: only {len(df)} bars of history (<250)")
                 continue
             equity, trades = run_backtest(
-                df, params=params, initial_capital=initial_capital, use_htf_filter=use_htf_filter
+                df, params=params, initial_capital=initial_capital,
+                use_htf_filter=use_htf_filter, use_regime_filter=use_regime_filter,
             )
             trade_df = trades_to_frame(trades)
             summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))

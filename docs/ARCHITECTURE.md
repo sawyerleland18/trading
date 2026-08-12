@@ -106,6 +106,21 @@ before entering — filters out counter-trend noise. Pine uses
 approximates it with a resample + one-bar-shift (`signals.add_htf_filter`)
 so it can never see a still-forming higher-timeframe candle.
 
+### Long-term regime filter
+
+Both implementations can optionally veto *new* entries that go against the
+Long-Term Regime factor's own direction — no new shorts while `long_term_pts
+> 0` (price above its 200-SMA and/or positive 12-1mo momentum dominating),
+no new longs while `long_term_pts < 0`. This exists because that factor is
+only one of six additive inputs to `net_score`, so a strong bearish reading
+from the other five could still trigger a short even while the long-term
+regime itself was bullish. Real-data backtesting (`docs/BACKTEST_RESULTS.md`)
+showed exactly that: SPY took 15 short trades against 12 longs through an
+11-year bull market. Toggle: `useRegimeFilter` input (Pine, defaults on) /
+`use_regime_filter` param to `run_backtest()` (Python, defaults off — opt
+in via `--regime-filter` on the CLI) / `regime_bullish` & `regime_bearish`
+columns from `compute_confluence()`.
+
 ### Risk management
 
 Both implementations size positions by **volatility risk**, not a fixed

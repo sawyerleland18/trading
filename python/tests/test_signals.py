@@ -6,9 +6,18 @@ def test_compute_confluence_adds_expected_columns(ohlcv):
     expected = {
         "trend_pts", "momentum_pts", "volume_pts", "vola_pts", "bb_pts", "long_term_pts",
         "net_score", "regime", "long_signal", "short_signal",
-        "exit_long_signal", "exit_short_signal",
+        "exit_long_signal", "exit_short_signal", "regime_bullish", "regime_bearish",
     }
     assert expected.issubset(out.columns)
+
+
+def test_regime_bullish_bearish_are_mutually_exclusive(ohlcv):
+    out = compute_confluence(ohlcv)
+    valid = out.dropna(subset=["long_term_pts"])
+    # long_term_pts is a sum of +-12 and +-13, so it's never exactly 0 —
+    # every bar is either bullish or bearish, never both or neither.
+    assert (valid["regime_bullish"] != valid["regime_bearish"]).all()
+    assert (valid["regime_bullish"] == (valid["long_term_pts"] > 0)).all()
 
 
 def test_net_score_bounded(ohlcv):
