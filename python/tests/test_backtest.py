@@ -157,3 +157,41 @@ def test_breadth_filter_blocks_entries_against_reference_ticker_trend(ohlcv, tre
     for t in filtered_trades:
         aligned = breadth.reindex([t.entry_date], method="ffill").iloc[0]
         assert aligned["breadth_bullish"] if t.side == "long" else aligned["breadth_bearish"]
+
+
+def test_strength_sizing_scales_first_trade_qty_by_conviction(trending_ohlcv):
+    # Compare the very first trade only - before any cash divergence has had
+    # a chance to accumulate between the two runs, both start from the same
+    # initial_capital, so qty should differ by *exactly* the |net_score|/100
+    # ratio at that entry bar (risk_dist from ATR is identical either way,
+    # unaffected by sizing).
+    from confluence.signals import compute_confluence
+
+    _, flat_trades = run_backtest(trending_ohlcv, use_strength_sizing=False)
+    _, scaled_trades = run_backtest(trending_ohlcv, use_strength_sizing=True)
+    assert flat_trades and scaled_trades
+    assert flat_trades[0].entry_date == scaled_trades[0].entry_date  # same signal timing
+
+    computed = compute_confluence(trending_ohlcv)
+    entry_score = computed.loc[flat_trades[0].entry_date, "net_score"]
+    expected_mult = abs(entry_score) / 100.0
+    assert scaled_trades[0].qty == pytest.approx(flat_trades[0].qty * expected_mult)
+
+
+def test_strength_sizing_never_exceeds_flat_sizing(trending_ohlcv):
+    # |net_score| is always <= 100, so the strength-scaled multiplier is
+    # always <= 1.0 - scaled qty should never exceed flat-sizing qty, for
+    # every trade the two runs have in common by entry date.
+    _, flat_trades = run_backtest(trending_ohlcv, use_strength_sizing=False)
+    _, scaled_trades = run_backtest(trending_ohlcv, use_strength_sizing=True)
+    flat_by_date = {t.entry_date: t for t in flat_trades}
+    for scaled_t in scaled_trades:
+        if scaled_t.entry_date in flat_by_date:
+            assert scaled_t.qty <= flat_by_date[scaled_t.entry_date].qty + 1e-9
+
+
+def test_strength_sizing_off_is_a_true_no_op(trending_ohlcv):
+    equity_a, trades_a = run_backtest(trending_ohlcv, use_strength_sizing=False)
+    equity_b, trades_b = run_backtest(trending_ohlcv)  # default
+    assert equity_a.equals(equity_b)
+    assert [t.qty for t in trades_a] == [t.qty for t in trades_b]

@@ -304,6 +304,46 @@ first**, and only add regime on top if you've separately confirmed it helps
 your specific ticker — don't assume stacking every validated filter
 together is the best configuration by default.
 
+## Update 4 (2026-08-12): strength-scaled position sizing — clean, uniform drawdown control
+
+Idea: scale the risked dollar amount per trade by the entry bar's own
+conviction (`|net_score| / 100`) instead of risking a flat `risk_per_trade_pct`
+on every trade regardless of how strong the signal was. `net_score` is
+already a -100..100 scale by construction, so this needed no new parameter
+beyond a toggle — `risk_per_trade_pct` becomes a ceiling, only fully risked
+at maximum conviction.
+
+**Controlled comparison, watchlist aggregate (regime + breadth filter stack,
+no slippage, isolating just the sizing change):**
+
+| Configuration | Median CAGR % | Median Sharpe | Median Max DD % |
+|---|---|---|---|
+| Flat sizing | 0.41 | 0.26 | -3.59 |
+| Strength-scaled sizing | 0.39 | 0.29 | -2.77 |
+
+Same trade count either way (155 — sizing doesn't change *which* trades
+fire, only their size) and identical win rates (size doesn't affect
+win/loss). The effect is small but real: better Sharpe, meaningfully
+smaller drawdown, at a small CAGR cost.
+
+**What makes this one trustworthy rather than a coin flip: it's uniform.**
+Per-ticker, max drawdown improved at **all 10 of 10** watchlist tickers —
+SPY -2.1%→-1.4%, QQQ -2.5%→-1.6%, TSLA -7.9%→-6.1%, MSFT -6.5%→-4.9%, every
+single name in the same direction, with CAGR dipping by a small, consistent
+amount at every ticker too. That's the opposite of the chop filter's
+result (helped SPY, hurt half the watchlist) and matches exactly what
+conviction-weighted sizing should theoretically do: smooth the equity curve
+and cut worst-case exposure on marginal-conviction trades, at a modest,
+consistent cost to raw return from being deliberately under-sized on those
+same marginal trades.
+
+**Consequence:** `useStrengthSizing` now **defaults on in Pine** (same
+convention as regime/breadth) and stays opt-in in Python
+(`--strength-sizing`). Unlike breadth (a bigger swing in Sharpe/CAGR), this
+one is a genuine but modest risk-management refinement — worth having on,
+not a result that changes the overall verdict about whether the system is
+profitable yet.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:

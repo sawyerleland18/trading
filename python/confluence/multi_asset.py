@@ -28,6 +28,7 @@ def run_watchlist(
     slippage_pct: float = 0.0,
     use_breadth_filter: bool = False,
     breadth_ticker: str = "SPY",
+    use_strength_sizing: bool = False,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Backtest every ticker in `tickers` and return a summary DataFrame, one row per ticker.
@@ -59,6 +60,7 @@ def run_watchlist(
                 use_htf_filter=use_htf_filter, use_regime_filter=use_regime_filter,
                 use_chop_filter=use_chop_filter, slippage_pct=slippage_pct,
                 breadth=breadth, use_breadth_filter=use_breadth_filter,
+                use_strength_sizing=use_strength_sizing,
             )
             trade_df = trades_to_frame(trades)
             summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))

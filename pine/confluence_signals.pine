@@ -123,6 +123,17 @@ atrLen        = input.int(14, "ATR Length", minval = 2, group = grpRisk)
 atrMultSL     = input.float(1.5, "ATR Stop-Loss Multiplier",   minval = 0.5, step = 0.1, group = grpRisk)
 atrMultTP     = input.float(3.0, "ATR Take-Profit Multiplier", minval = 0.5, step = 0.1, group = grpRisk)
 riskPerTrade  = input.float(1.0, "Risk per Trade (% of equity)", minval = 0.1, step = 0.1, group = grpRisk)
+// Defaults ON - real-data testing across the 10-ticker watchlist
+// (docs/BACKTEST_RESULTS.md) validated this as a clean, broad-based
+// improvement to drawdown control: max drawdown improved at ALL 10/10
+// tickers (e.g. SPY -2.1%->-1.4%, TSLA -7.9%->-6.1%), median Sharpe
+// 0.26->0.29, at a small, consistent CAGR cost (0.41%->0.39% median) -
+// not a mixed bag like the chop filter, a uniform effect everywhere tested.
+// riskPerTrade becomes a CEILING only reached at maximum conviction
+// (net_score = +-100) rather than a flat amount every trade risks
+// regardless of signal strength - a marginal entry right at its trigger
+// threshold risks proportionally less.
+useStrengthSizing = input.bool(true, "Scale Position Size by Signal Conviction (|net score| / 100)", group = grpRisk)
 
 grpPopup = "Candle BUY/SELL % Popup"
 showPopupAlert = input.bool(true, "Show BUY/SELL Popup Label When Score Crosses Threshold", group = grpPopup)
@@ -269,10 +280,15 @@ breadthOk_short = not useBreadthFilter or breadthBearish
 longCondition  = longTrigger  and (not useHtfFilter or htfBullish) and (not useRegimeFilter or regimeBullish) and chopOk and breadthOk_long  and barstate.isconfirmed
 shortCondition = shortTrigger and (not useHtfFilter or htfBearish) and (not useRegimeFilter or regimeBearish) and chopOk and breadthOk_short and barstate.isconfirmed
 
+// When useStrengthSizing is on, riskPerTrade is only fully risked at max
+// conviction (|netScore| = 100) - a marginal entry right at its trigger
+// threshold risks proportionally less. See docs/ARCHITECTURE.md.
+strengthMult = useStrengthSizing ? math.abs(netScore) / 100 : 1.0
+
 longRiskDist  = atrVal * atrMultSL
 shortRiskDist = atrVal * atrMultSL
-longQty  = longRiskDist  > 0 ? (strategy.equity * riskPerTrade / 100) / longRiskDist  : 0.0
-shortQty = shortRiskDist > 0 ? (strategy.equity * riskPerTrade / 100) / shortRiskDist : 0.0
+longQty  = longRiskDist  > 0 ? (strategy.equity * riskPerTrade / 100 * strengthMult) / longRiskDist  : 0.0
+shortQty = shortRiskDist > 0 ? (strategy.equity * riskPerTrade / 100 * strengthMult) / shortRiskDist : 0.0
 
 // "If you enter now" hypothetical levels for the Manual Trade Planner below -
 // same ATR-based formulas as the real entry blocks further down, just
@@ -282,7 +298,7 @@ plannerLongSL  = close - atrVal * atrMultSL
 plannerLongTP  = close + atrVal * atrMultTP
 plannerShortSL = close + atrVal * atrMultSL
 plannerShortTP = close - atrVal * atrMultTP
-plannerRiskDollars = strategy.equity * riskPerTrade / 100
+plannerRiskDollars = strategy.equity * riskPerTrade / 100 * strengthMult
 plannerRewardRisk = atrMultSL > 0 ? atrMultTP / atrMultSL : na
 
 // Stop-loss / take-profit are locked in at the moment of entry (based on ATR

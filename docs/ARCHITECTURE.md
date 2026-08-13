@@ -248,6 +248,19 @@ dollar/share amount: `qty = (equity * risk_per_trade_pct) / (ATR * atr_mult_sl)`
 That means every trade risks roughly the same fraction of the account
 regardless of how volatile the instrument is.
 
+Optionally, that risked amount is further scaled by **signal conviction**:
+`use_strength_sizing` (Python, opt-in via `--strength-sizing`) /
+`useStrengthSizing` (Pine, **defaults on**) multiplies the risked dollars by
+`|net_score| / 100` at the entry bar — since `net_score` is already a
+-100..100 scale by construction, `risk_per_trade_pct` becomes a *ceiling*
+only reached at maximum conviction, not a flat amount every trade risks
+regardless of how strong the signal was. Validated against real
+cross-sectional data before defaulting on in Pine (docs/BACKTEST_RESULTS.md):
+max drawdown improved at all 10/10 watchlist tickers, a clean and uniform
+effect (unlike the chop filter's mixed result) — median Sharpe 0.26→0.29, at
+a small, consistent CAGR cost (0.41%→0.39% median). Python stays opt-in, same
+research-baseline convention as every other filter.
+
 Stop-loss and take-profit are **locked in at the moment of entry** (ATR at
 that bar × the configured multipliers) and held fixed for the life of the
 trade in both implementations — they do not recalculate every bar. (This was

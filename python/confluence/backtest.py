@@ -64,6 +64,7 @@ def run_backtest(
     slippage_pct: float = 0.0,
     breadth: pd.DataFrame | None = None,
     use_breadth_filter: bool = False,
+    use_strength_sizing: bool = False,
 ) -> tuple[pd.Series, list[Trade]]:
     """Run the confluence strategy over `df` (raw OHLCV) and return (equity_curve, trades).
 
@@ -96,6 +97,15 @@ def run_backtest(
     `breadth` (output of `signals.compute_breadth()` on a reference ticker's
     OHLCV, typically SPY) — raises if use_breadth_filter=True and breadth is
     None, rather than silently no-op'ing.
+
+    use_strength_sizing=True scales the risked dollar amount by the entry
+    bar's own conviction — |net_score| / 100, since net_score is already a
+    -100..100 scale by construction. A marginal entry right at its threshold
+    risks proportionally less than a full-conviction entry at net_score=100;
+    risk_per_trade_pct becomes the ceiling (risked only at max conviction),
+    not a flat amount every trade risks regardless of signal strength.
+    Defaults to False (flat sizing, current behavior) to keep existing
+    callers' results unchanged unless explicitly opted in.
     """
     p = params or ConfluenceParams()
     data = compute_confluence(df, p)
@@ -177,7 +187,8 @@ def run_backtest(
 
         # ---- look for new entry (only when flat) ----
         if position is None:
-            risk_dollars = cash * (p.risk_per_trade_pct / 100)
+            strength_mult = (abs(row["net_score"]) / 100.0) if use_strength_sizing else 1.0
+            risk_dollars = cash * (p.risk_per_trade_pct / 100) * strength_mult
             risk_dist = row["atr"] * p.atr_mult_sl
             qty = (risk_dollars / risk_dist) if risk_dist > 0 else 0.0
 

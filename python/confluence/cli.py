@@ -47,6 +47,7 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
         use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
         breadth=breadth, use_breadth_filter=args.breadth_filter,
+        use_strength_sizing=args.strength_sizing,
     )
     trade_df = trades_to_frame(trades)
     summary = summarize(equity, trade_df["pnl_pct"] if len(trade_df) else pd.Series(dtype=float))
@@ -63,6 +64,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
         use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
         use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
         use_breadth_filter=args.breadth_filter, breadth_ticker=args.breadth_ticker,
+        use_strength_sizing=args.strength_sizing,
     )
     if result.empty:
         print("No results.")
@@ -89,6 +91,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         df, grid, n_folds=args.folds, use_regime_filter=args.regime_filter,
         use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
         breadth=breadth, use_breadth_filter=args.breadth_filter,
+        use_strength_sizing=args.strength_sizing,
     )
     pd.set_option("display.width", 200)
     print(folds)
@@ -123,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Veto entries against a market-breadth reference ticker's own 200-SMA trend (default SPY)",
     )
     bt.add_argument("--breadth-ticker", default="SPY", help="Market-breadth reference ticker (default SPY)")
+    bt.add_argument(
+        "--strength-sizing", action="store_true",
+        help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
+    )
     bt.add_argument("--refresh", action="store_true", help="Bypass cache and re-download")
     bt.add_argument("--out", default=None, help="CSV path to save the trade log")
     bt.set_defaults(func=cmd_backtest)
@@ -149,6 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Veto entries against a market-breadth reference ticker's own 200-SMA trend (default SPY)",
     )
     scan.add_argument("--breadth-ticker", default="SPY", help="Market-breadth reference ticker (default SPY)")
+    scan.add_argument(
+        "--strength-sizing", action="store_true",
+        help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
+    )
     scan.add_argument("--out", default=None, help="CSV path to save the summary table")
     scan.set_defaults(func=cmd_scan)
 
@@ -174,6 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Veto entries against a market-breadth reference ticker's own 200-SMA trend (default SPY)",
     )
     opt.add_argument("--breadth-ticker", default="SPY", help="Market-breadth reference ticker (default SPY)")
+    opt.add_argument(
+        "--strength-sizing", action="store_true",
+        help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
+    )
     opt.add_argument("--refresh", action="store_true")
     opt.set_defaults(func=cmd_optimize)
 
