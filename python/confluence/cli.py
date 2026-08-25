@@ -40,7 +40,7 @@ def _print_summary(title: str, summary: dict) -> None:
 
 def cmd_backtest(args: argparse.Namespace) -> None:
     df = load_ohlcv(args.ticker, start=args.start, end=args.end, force_refresh=args.refresh)
-    params = ConfluenceParams()
+    params = ConfluenceParams(pattern_weight=args.pattern_weight)
     breadth = _load_breadth(args)
     equity, trades = run_backtest(
         df, params=params, initial_capital=args.capital,
@@ -59,8 +59,9 @@ def cmd_backtest(args: argparse.Namespace) -> None:
 
 def cmd_scan(args: argparse.Namespace) -> None:
     tickers = load_watchlist(args.watchlist)
+    params = ConfluenceParams(pattern_weight=args.pattern_weight)
     result = run_watchlist(
-        tickers, start=args.start, end=args.end,
+        tickers, start=args.start, end=args.end, params=params,
         use_htf_filter=args.htf, use_regime_filter=args.regime_filter,
         use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
         use_breadth_filter=args.breadth_filter, breadth_ticker=args.breadth_ticker,
@@ -87,8 +88,9 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         "atr_mult_tp": [2.0, 3.0, 4.0],
     }
     breadth = _load_breadth(args)
+    base_params = ConfluenceParams(pattern_weight=args.pattern_weight)
     folds, best_params = walk_forward(
-        df, grid, n_folds=args.folds, use_regime_filter=args.regime_filter,
+        df, grid, n_folds=args.folds, base_params=base_params, use_regime_filter=args.regime_filter,
         use_chop_filter=args.chop_filter, slippage_pct=args.slippage,
         breadth=breadth, use_breadth_filter=args.breadth_filter,
         use_strength_sizing=args.strength_sizing,
@@ -130,6 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--strength-sizing", action="store_true",
         help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
     )
+    bt.add_argument(
+        "--pattern-weight", type=float, default=0.0,
+        help="Points contributed by confirmed chart patterns (Double Top/Bottom, Head-and-Shoulders/Inverse); 0 = inert (default)",
+    )
     bt.add_argument("--refresh", action="store_true", help="Bypass cache and re-download")
     bt.add_argument("--out", default=None, help="CSV path to save the trade log")
     bt.set_defaults(func=cmd_backtest)
@@ -160,6 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--strength-sizing", action="store_true",
         help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
     )
+    scan.add_argument(
+        "--pattern-weight", type=float, default=0.0,
+        help="Points contributed by confirmed chart patterns (Double Top/Bottom, Head-and-Shoulders/Inverse); 0 = inert (default)",
+    )
     scan.add_argument("--out", default=None, help="CSV path to save the summary table")
     scan.set_defaults(func=cmd_scan)
 
@@ -188,6 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
     opt.add_argument(
         "--strength-sizing", action="store_true",
         help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
+    )
+    opt.add_argument(
+        "--pattern-weight", type=float, default=0.0,
+        help="Points contributed by confirmed chart patterns (Double Top/Bottom, Head-and-Shoulders/Inverse); 0 = inert (default)",
     )
     opt.add_argument("--refresh", action="store_true")
     opt.set_defaults(func=cmd_optimize)

@@ -241,6 +241,43 @@ purpose. Both default to a small-but-nonzero amount of protection now (Pine:
 showed the strategy's edge is thin enough that unrealistically clean fills
 were flattering the numbers.
 
+### Chart patterns (Factor 7, optional — weakest evidence base in the system)
+
+Unlike the other six factors, this one isn't built on peer-reviewed
+finance research the way the Long-Term Regime factor is. The one real
+academic anchor is Lo, Mamaysky & Wang (2000), "Foundations of Technical
+Analysis" (Journal of Finance), which used kernel regression to
+algorithmically identify classical chart patterns and tested whether their
+forward returns were statistically distinguishable from the unconditional
+distribution. This factor implements a simpler version of that idea —
+pivot ("fractal") detection instead of kernel regression, geometric
+tolerance rules instead of a statistical fit — for two pattern families to
+start: **Double Top / Double Bottom** and **Head-and-Shoulders / Inverse**.
+See `python/confluence/patterns.py`'s module docstring for the full
+methodology (pivot detection → zigzag → geometric match → neckline
+breakout confirmation, all point-in-time correct with no lookahead).
+
+**Defaults to zero weight (inert) in both implementations** — this factor
+contributes nothing to `net_score` unless explicitly turned on
+(`pattern_weight` in Python, `patternWeight` in Pine), which matters
+because, unlike the regime/breadth/strength-sizing additions, real-data
+testing found this one **did not earn a nonzero default**: in isolation it
+made things slightly *worse* as weight increased (median CAGR, Sharpe, and
+% profitable across the watchlist all declined), and combined with the
+validated regime+breadth+strength-sizing stack the small aggregate
+improvement wasn't broad-based — the same broad-vs-concentrated check that
+correctly caught the chop filter. See `docs/BACKTEST_RESULTS.md` for the
+full numbers. Left implemented, tested, and available for further tuning
+(different tolerance parameters, more patterns from the Lo-Mamaysky-Wang
+set) rather than removed, since a negative result on the *default*
+parameters isn't the same as proof the underlying idea can't work — but it
+should not be turned on without your own further validation.
+
+One deliberate simplification worth knowing: a real Head-and-Shoulders
+neckline is a line connecting the two troughs, which can slope; both
+implementations approximate it as flat, at the more conservative
+(higher, for a bearish H&S) of the two trough prices.
+
 ### Risk management
 
 Both implementations size positions by **volatility risk**, not a fixed

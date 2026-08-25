@@ -135,6 +135,26 @@ riskPerTrade  = input.float(1.0, "Risk per Trade (% of equity)", minval = 0.1, s
 // threshold risks proportionally less.
 useStrengthSizing = input.bool(true, "Scale Position Size by Signal Conviction (|net score| / 100)", group = grpRisk)
 
+grpPattern = "Chart Patterns (Double Top/Bottom, Head-and-Shoulders)"
+// patternWeight defaults to 0.0 (inert) - real-data testing across the
+// 10-ticker watchlist (docs/BACKTEST_RESULTS.md) found the effect
+// inconclusive at best: in isolation it made things slightly WORSE
+// (median CAGR/Sharpe/%% profitable all declined as weight increased),
+// and combined with the validated regime+breadth+strength-sizing stack
+// the small aggregate improvement wasn't broad-based - a couple tickers
+// moved a little, most were unchanged, one (NVDA) got slightly worse.
+// That's the same broad-based-or-not test that correctly rejected the
+// chop filter. Left implemented and available (unlike chart patterns'
+// weaker evidence base generally - see python/confluence/patterns.py)
+// for further tuning, not turned on by default.
+patternWeight        = input.float(0.0, "Pattern Factor Weight (points added/subtracted on a confirmed pattern)", minval = 0.0, group = grpPattern)
+patPivotLeft          = input.int(5, "Pivot Left Bars", minval = 1, group = grpPattern)
+patPivotRight         = input.int(5, "Pivot Right Bars", minval = 1, group = grpPattern)
+patTolerancePct       = input.float(0.03, "Peak/Shoulder Tolerance %", minval = 0.001, step = 0.005, group = grpPattern)
+patTroughDepthPct     = input.float(0.02, "Min Trough/Head Depth %", minval = 0.001, step = 0.005, group = grpPattern)
+patMaxBars            = input.int(60, "Max Bars Between Pattern's Outer Points", minval = 5, group = grpPattern)
+patBreakoutWindow     = input.int(20, "Neckline Breakout Confirmation Window (bars)", minval = 1, group = grpPattern)
+
 grpPopup = "Candle BUY/SELL % Popup"
 showPopupAlert = input.bool(true, "Show BUY/SELL Popup Label When Score Crosses Threshold", group = grpPopup)
 popupThreshold = input.int(50, "Popup Threshold (% net score, either direction)", minval = 1, maxval = 100, group = grpPopup)
@@ -222,8 +242,173 @@ longTermPts = 0.0
 longTermPts += close > ltSma ? 12 : -12
 longTermPts += tsMomentum > 0 ? 13 : -13
 
+// --------- FACTOR 7 (optional): CHART PATTERNS (+/-patternWeight, default 0) ----
+// See python/confluence/patterns.py module docstring for the methodology
+// and the evidence-base caveat (much weaker than the other six factors).
+// Pivot ("fractal") detection via Pine's built-in ta.pivothigh/pivotlow,
+// which confirms a pivot exactly `patPivotRight` bars after it forms - no
+// lookahead. Confirmed pivots are collapsed into a strictly alternating
+// zigzag (consecutive same-direction pivots keep only the more extreme
+// one), then geometric tolerance rules are checked against the tail of
+// that zigzag. A pattern candidate doesn't fire until price actually
+// breaks its neckline within patBreakoutWindow bars afterward - matching
+// how these patterns are actually traded, not just shape-matched.
+var array<float> zzPrice = array.new_float(0)
+var array<int> zzBar     = array.new_int(0)
+var array<int> zzKind    = array.new_int(0)  // 1 = pivot high, -1 = pivot low
+maxZigzagLen = 20
+
+patPh = ta.pivothigh(high, patPivotLeft, patPivotRight)
+patPl = ta.pivotlow(low, patPivotLeft, patPivotRight)
+
+if not na(patPh)
+    phSz = array.size(zzKind)
+    if phSz > 0 and array.get(zzKind, phSz - 1) == 1
+        if patPh > array.get(zzPrice, phSz - 1)
+            array.set(zzPrice, phSz - 1, patPh)
+            array.set(zzBar, phSz - 1, bar_index)
+    else
+        array.push(zzPrice, patPh)
+        array.push(zzBar, bar_index)
+        array.push(zzKind, 1)
+
+if not na(patPl)
+    plSz = array.size(zzKind)
+    if plSz > 0 and array.get(zzKind, plSz - 1) == -1
+        if patPl < array.get(zzPrice, plSz - 1)
+            array.set(zzPrice, plSz - 1, patPl)
+            array.set(zzBar, plSz - 1, bar_index)
+    else
+        array.push(zzPrice, patPl)
+        array.push(zzBar, bar_index)
+        array.push(zzKind, -1)
+
+if array.size(zzKind) > maxZigzagLen
+    array.shift(zzPrice)
+    array.shift(zzBar)
+    array.shift(zzKind)
+
+// Known simplification: pattern conditions below are checked once per bar,
+// against whatever the zigzag looks like after both possible pushes above.
+// On the rare bar where a pivot high AND a pivot low confirm simultaneously,
+// only the sequence ending in the low (pushed second) gets checked - a
+// pattern that would have completed on that bar's high goes unchecked
+// until/unless a later pivot happens to complete a different pattern. Left
+// as-is rather than adding more state-mutation complexity to fix an edge
+// case this rare, especially given patternWeight defaults to 0 anyway.
+
+var float pendingDTNeckline = na
+var int   pendingDTDeadline = na
+var float pendingDBNeckline = na
+var int   pendingDBDeadline = na
+var float pendingHSNeckline = na
+var int   pendingHSDeadline = na
+var float pendingIHSNeckline = na
+var int   pendingIHSDeadline = na
+
+zzSz = array.size(zzKind)
+
+// Double Top / Double Bottom: last 3 zigzag points = [p1, mid, p2]
+if zzSz >= 3
+    zk2 = array.get(zzKind, zzSz - 1)
+    zkMid = array.get(zzKind, zzSz - 2)
+    zk1 = array.get(zzKind, zzSz - 3)
+    if zk1 == zk2 and zkMid != zk1
+        p1Price = array.get(zzPrice, zzSz - 3)
+        p1Bar = array.get(zzBar, zzSz - 3)
+        midPrice = array.get(zzPrice, zzSz - 2)
+        p2Price = array.get(zzPrice, zzSz - 1)
+        p2Bar = array.get(zzBar, zzSz - 1)
+        barsApart = p2Bar - p1Bar
+        if barsApart > 0 and barsApart <= patMaxBars
+            if zk1 == 1
+                avgPeak = (p1Price + p2Price) / 2
+                if avgPeak > 0 and math.abs(p2Price - p1Price) / avgPeak <= patTolerancePct
+                    minPeak = math.min(p1Price, p2Price)
+                    if minPeak > 0 and (minPeak - midPrice) / minPeak >= patTroughDepthPct
+                        pendingDTNeckline := midPrice
+                        pendingDTDeadline := bar_index + patBreakoutWindow
+            else
+                avgTrough = (p1Price + p2Price) / 2
+                if avgTrough > 0 and math.abs(p2Price - p1Price) / avgTrough <= patTolerancePct
+                    maxTrough = math.max(p1Price, p2Price)
+                    if midPrice > 0 and (midPrice - maxTrough) / midPrice >= patTroughDepthPct
+                        pendingDBNeckline := midPrice
+                        pendingDBDeadline := bar_index + patBreakoutWindow
+
+// Head & Shoulders / Inverse: last 5 zigzag points = [leftShoulder, trough1, head, trough2, rightShoulder]
+if zzSz >= 5
+    zkRS = array.get(zzKind, zzSz - 1)
+    zkT2 = array.get(zzKind, zzSz - 2)
+    zkHD = array.get(zzKind, zzSz - 3)
+    zkT1 = array.get(zzKind, zzSz - 4)
+    zkLS = array.get(zzKind, zzSz - 5)
+    if zkLS == zkHD and zkHD == zkRS and zkT1 != zkLS and zkT2 != zkLS
+        lsPrice = array.get(zzPrice, zzSz - 5)
+        lsBar = array.get(zzBar, zzSz - 5)
+        t1Price = array.get(zzPrice, zzSz - 4)
+        hdPrice = array.get(zzPrice, zzSz - 3)
+        t2Price = array.get(zzPrice, zzSz - 2)
+        rsPrice = array.get(zzPrice, zzSz - 1)
+        rsBar = array.get(zzBar, zzSz - 1)
+        barsApart2 = rsBar - lsBar
+        if barsApart2 > 0 and barsApart2 <= patMaxBars * 2
+            avgShoulder = (lsPrice + rsPrice) / 2
+            shouldersOk = avgShoulder > 0 and math.abs(rsPrice - lsPrice) / avgShoulder <= patTolerancePct
+            if zkLS == 1 and hdPrice > lsPrice and hdPrice > rsPrice and shouldersOk
+                pendingHSNeckline := math.max(t1Price, t2Price)
+                pendingHSDeadline := bar_index + patBreakoutWindow
+            if zkLS == -1 and hdPrice < lsPrice and hdPrice < rsPrice and shouldersOk
+                pendingIHSNeckline := math.min(t1Price, t2Price)
+                pendingIHSDeadline := bar_index + patBreakoutWindow
+
+doubleTopConfirmed = false
+doubleBottomConfirmed = false
+headShouldersConfirmed = false
+inverseHSConfirmed = false
+
+if not na(pendingDTNeckline)
+    if close < pendingDTNeckline
+        doubleTopConfirmed := true
+        pendingDTNeckline := na
+        pendingDTDeadline := na
+    else if bar_index > pendingDTDeadline
+        pendingDTNeckline := na
+        pendingDTDeadline := na
+
+if not na(pendingDBNeckline)
+    if close > pendingDBNeckline
+        doubleBottomConfirmed := true
+        pendingDBNeckline := na
+        pendingDBDeadline := na
+    else if bar_index > pendingDBDeadline
+        pendingDBNeckline := na
+        pendingDBDeadline := na
+
+if not na(pendingHSNeckline)
+    if close < pendingHSNeckline
+        headShouldersConfirmed := true
+        pendingHSNeckline := na
+        pendingHSDeadline := na
+    else if bar_index > pendingHSDeadline
+        pendingHSNeckline := na
+        pendingHSDeadline := na
+
+if not na(pendingIHSNeckline)
+    if close > pendingIHSNeckline
+        inverseHSConfirmed := true
+        pendingIHSNeckline := na
+        pendingIHSDeadline := na
+    else if bar_index > pendingIHSDeadline
+        pendingIHSNeckline := na
+        pendingIHSDeadline := na
+
+patternBullish = doubleBottomConfirmed or inverseHSConfirmed
+patternBearish = doubleTopConfirmed or headShouldersConfirmed
+patternPts = patternBullish ? patternWeight : patternBearish ? -patternWeight : 0.0
+
 // ------------------------------ NET SCORE -------------------------------------
-netScore = trendPts + momentumPts + volumePts + volaPts + bbPts + longTermPts
+netScore = trendPts + momentumPts + volumePts + volaPts + bbPts + longTermPts + patternPts
 
 // ---------------------------- MULTI-TIMEFRAME FILTER --------------------------
 [htfEmaFast, htfEmaSlow] = request.security(syminfo.tickerid, htfTF,
@@ -476,7 +661,7 @@ if showSignalButton and barstate.islast
     table.cell(signalBox, 0, 1, "STRENGTH " + strengthText, text_size = size.large, text_color = color.white, bgcolor = color.new(color.black, 20))
 
 // --------------------------- DETAILED DATA PANEL -------------------------------------
-var table dash = table.new(position.top_right, 2, 35, bgcolor = color.new(color.black, 20), border_width = 1)
+var table dash = table.new(position.top_right, 2, 36, bgcolor = color.new(color.black, 20), border_width = 1)
 sectionBg = color.new(color.blue, 60)
 
 if showDashboard and barstate.islast
@@ -503,57 +688,59 @@ if showDashboard and barstate.islast
     table.cell(dash, 1, 9, str.tostring(bbPts, "#.0"), text_size = size.small)
     table.cell(dash, 0, 10, "LT Regime (+/-25)", text_size = size.small)
     table.cell(dash, 1, 10, str.tostring(longTermPts, "#.0"), text_size = size.small)
+    table.cell(dash, 0, 11, "Chart Pattern (+/-patW)", text_size = size.small)
+    table.cell(dash, 1, 11, str.tostring(patternPts, "#.0"), text_size = size.small)
 
-    table.cell(dash, 0, 11, "LIVE INDICATORS", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 1, 11, "", bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 0, 12, "RSI (14)", text_size = size.small)
-    table.cell(dash, 1, 12, rsiText, text_size = size.small)
-    table.cell(dash, 0, 13, "MACD Hist", text_size = size.small)
-    table.cell(dash, 1, 13, macdHistText, text_size = size.small)
-    table.cell(dash, 0, 14, "ADX", text_size = size.small)
-    table.cell(dash, 1, 14, adxText, text_size = size.small)
-    table.cell(dash, 0, 15, "Rel Volume", text_size = size.small)
-    table.cell(dash, 1, 15, relVolText, text_size = size.small)
-    table.cell(dash, 0, 16, "ATR", text_size = size.small)
-    table.cell(dash, 1, 16, atrText, text_size = size.small)
-    table.cell(dash, 0, 17, "Price vs EMA200", text_size = size.small)
-    table.cell(dash, 1, 17, emaVsSlowText, text_size = size.small)
-    table.cell(dash, 0, 18, "12-1mo Momentum", text_size = size.small)
-    table.cell(dash, 1, 18, momText, text_size = size.small)
-    table.cell(dash, 0, 19, "HTF Trend", text_size = size.small)
-    table.cell(dash, 1, 19, htfTrendText, text_size = size.small)
-    table.cell(dash, 0, 20, "Regime Filter", text_size = size.small)
-    table.cell(dash, 1, 20, regimeText, text_size = size.small)
-    table.cell(dash, 0, 21, "Chop Filter", text_size = size.small)
-    table.cell(dash, 1, 21, chopText, text_size = size.small)
-    table.cell(dash, 0, 22, "Breadth Filter", text_size = size.small)
-    table.cell(dash, 1, 22, breadthText, text_size = size.small)
+    table.cell(dash, 0, 12, "LIVE INDICATORS", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 12, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 13, "RSI (14)", text_size = size.small)
+    table.cell(dash, 1, 13, rsiText, text_size = size.small)
+    table.cell(dash, 0, 14, "MACD Hist", text_size = size.small)
+    table.cell(dash, 1, 14, macdHistText, text_size = size.small)
+    table.cell(dash, 0, 15, "ADX", text_size = size.small)
+    table.cell(dash, 1, 15, adxText, text_size = size.small)
+    table.cell(dash, 0, 16, "Rel Volume", text_size = size.small)
+    table.cell(dash, 1, 16, relVolText, text_size = size.small)
+    table.cell(dash, 0, 17, "ATR", text_size = size.small)
+    table.cell(dash, 1, 17, atrText, text_size = size.small)
+    table.cell(dash, 0, 18, "Price vs EMA200", text_size = size.small)
+    table.cell(dash, 1, 18, emaVsSlowText, text_size = size.small)
+    table.cell(dash, 0, 19, "12-1mo Momentum", text_size = size.small)
+    table.cell(dash, 1, 19, momText, text_size = size.small)
+    table.cell(dash, 0, 20, "HTF Trend", text_size = size.small)
+    table.cell(dash, 1, 20, htfTrendText, text_size = size.small)
+    table.cell(dash, 0, 21, "Regime Filter", text_size = size.small)
+    table.cell(dash, 1, 21, regimeText, text_size = size.small)
+    table.cell(dash, 0, 22, "Chop Filter", text_size = size.small)
+    table.cell(dash, 1, 22, chopText, text_size = size.small)
+    table.cell(dash, 0, 23, "Breadth Filter", text_size = size.small)
+    table.cell(dash, 1, 23, breadthText, text_size = size.small)
 
-    table.cell(dash, 0, 23, "POSITION", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 1, 23, "", bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 0, 24, "Position", text_size = size.small)
-    table.cell(dash, 1, 24, positionText, text_color = positionColor, text_size = size.small)
-    table.cell(dash, 0, 25, "Entry Price", text_size = size.small)
-    table.cell(dash, 1, 25, entryPriceText, text_size = size.small)
-    table.cell(dash, 0, 26, "Stop Loss", text_size = size.small)
-    table.cell(dash, 1, 26, slText, text_color = color.red, text_size = size.small)
-    table.cell(dash, 0, 27, "Take Profit", text_size = size.small)
-    table.cell(dash, 1, 27, tpText, text_color = color.lime, text_size = size.small)
-    table.cell(dash, 0, 28, "Open P/L", text_size = size.small)
-    table.cell(dash, 1, 28, openPlText, text_color = openPlColor, text_size = size.small)
+    table.cell(dash, 0, 24, "POSITION", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 24, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 25, "Position", text_size = size.small)
+    table.cell(dash, 1, 25, positionText, text_color = positionColor, text_size = size.small)
+    table.cell(dash, 0, 26, "Entry Price", text_size = size.small)
+    table.cell(dash, 1, 26, entryPriceText, text_size = size.small)
+    table.cell(dash, 0, 27, "Stop Loss", text_size = size.small)
+    table.cell(dash, 1, 27, slText, text_color = color.red, text_size = size.small)
+    table.cell(dash, 0, 28, "Take Profit", text_size = size.small)
+    table.cell(dash, 1, 28, tpText, text_color = color.lime, text_size = size.small)
+    table.cell(dash, 0, 29, "Open P/L", text_size = size.small)
+    table.cell(dash, 1, 29, openPlText, text_color = openPlColor, text_size = size.small)
 
-    table.cell(dash, 0, 29, "STRATEGY HISTORY (this chart)", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 1, 29, "", bgcolor = sectionBg, text_size = size.small)
-    table.cell(dash, 0, 30, "Closed Trades", text_size = size.small)
-    table.cell(dash, 1, 30, str.tostring(closedTrades, "#"), text_size = size.small)
-    table.cell(dash, 0, 31, "Win Rate", text_size = size.small)
-    table.cell(dash, 1, 31, winRateText, text_size = size.small)
-    table.cell(dash, 0, 32, "Profit Factor", text_size = size.small)
-    table.cell(dash, 1, 32, pfText, text_size = size.small)
-    table.cell(dash, 0, 33, "Net Profit", text_size = size.small)
-    table.cell(dash, 1, 33, netProfitText, text_color = netProfitColor, text_size = size.small)
-    table.cell(dash, 0, 34, "Max Drawdown", text_size = size.small)
-    table.cell(dash, 1, 34, maxDDText, text_color = color.red, text_size = size.small)
+    table.cell(dash, 0, 30, "STRATEGY HISTORY (this chart)", text_color = color.white, bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 1, 30, "", bgcolor = sectionBg, text_size = size.small)
+    table.cell(dash, 0, 31, "Closed Trades", text_size = size.small)
+    table.cell(dash, 1, 31, str.tostring(closedTrades, "#"), text_size = size.small)
+    table.cell(dash, 0, 32, "Win Rate", text_size = size.small)
+    table.cell(dash, 1, 32, winRateText, text_size = size.small)
+    table.cell(dash, 0, 33, "Profit Factor", text_size = size.small)
+    table.cell(dash, 1, 33, pfText, text_size = size.small)
+    table.cell(dash, 0, 34, "Net Profit", text_size = size.small)
+    table.cell(dash, 1, 34, netProfitText, text_color = netProfitColor, text_size = size.small)
+    table.cell(dash, 0, 35, "Max Drawdown", text_size = size.small)
+    table.cell(dash, 1, 35, maxDDText, text_color = color.red, text_size = size.small)
 
 // --------------------------- MANUAL TRADE PLANNER -------------------------------
 // "If you enter now" - always live, no click needed. Same ATR-based stop/

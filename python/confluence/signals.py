@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from . import indicators as ind
+from . import patterns as pat
 
 
 @dataclass
@@ -75,6 +76,18 @@ class ConfluenceParams:
     atr_mult_sl: float = 1.5
     atr_mult_tp: float = 3.0
     risk_per_trade_pct: float = 1.0
+    # Chart patterns (Double Top/Bottom, Head-and-Shoulders/Inverse) — see
+    # patterns.py module docstring for the evidence caveat and methodology.
+    # pattern_weight defaults to 0.0 (inert): this factor contributes
+    # nothing to net_score until explicitly validated and turned on, same
+    # as every other new signal here (see docs/BACKTEST_RESULTS.md).
+    pattern_weight: float = 0.0
+    pattern_pivot_left: int = 5
+    pattern_pivot_right: int = 5
+    pattern_tolerance_pct: float = 0.03
+    pattern_trough_depth_pct: float = 0.02
+    pattern_max_bars: int = 60
+    pattern_breakout_window: int = 20
 
 
 REQUIRED_COLUMNS = ("open", "high", "low", "close", "volume")
@@ -198,6 +211,29 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
     out["regime_bullish"] = out["long_term_pts"] > 0
     out["regime_bearish"] = out["long_term_pts"] < 0
 
+    # ---- Factor 7 (optional): Chart Patterns — Double Top/Bottom, Head-and-
+    # Shoulders/Inverse (+-pattern_weight, default 0 = inert) ----
+    # See patterns.py module docstring for the evidence caveat: this factor
+    # has a much weaker evidence base than the other six and defaults to
+    # zero weight so it changes nothing until explicitly validated and
+    # turned on (see docs/BACKTEST_RESULTS.md).
+    detected = pat.detect_chart_patterns(
+        df,
+        left=p.pattern_pivot_left,
+        right=p.pattern_pivot_right,
+        tolerance_pct=p.pattern_tolerance_pct,
+        trough_depth_pct=p.pattern_trough_depth_pct,
+        max_pattern_bars=p.pattern_max_bars,
+        breakout_window=p.pattern_breakout_window,
+    )
+    out["double_top_confirmed"] = detected["double_top_confirmed"]
+    out["double_bottom_confirmed"] = detected["double_bottom_confirmed"]
+    out["head_shoulders_confirmed"] = detected["head_shoulders_confirmed"]
+    out["inverse_head_shoulders_confirmed"] = detected["inverse_head_shoulders_confirmed"]
+    bullish_pattern = out["double_bottom_confirmed"] | out["inverse_head_shoulders_confirmed"]
+    bearish_pattern = out["double_top_confirmed"] | out["head_shoulders_confirmed"]
+    out["pattern_pts"] = np.where(bullish_pattern, p.pattern_weight, np.where(bearish_pattern, -p.pattern_weight, 0.0))
+
     out["net_score"] = (
         out["trend_pts"]
         + out["momentum_pts"]
@@ -205,6 +241,7 @@ def compute_confluence(df: pd.DataFrame, params: ConfluenceParams | None = None)
         + out["vola_pts"]
         + out["bb_pts"]
         + out["long_term_pts"]
+        + out["pattern_pts"]
     )
 
     out["regime"] = np.select(

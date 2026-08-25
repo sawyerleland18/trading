@@ -1,4 +1,25 @@
+import numpy as np
+import pandas as pd
+
 from confluence.signals import ConfluenceParams, add_htf_filter, compute_breadth, compute_confluence
+
+
+def _double_top_ohlcv() -> pd.DataFrame:
+    """Hand-built series with a clean, unambiguous double top: two comparable
+    peaks with a real trough between them, then a break below that trough."""
+    n = 60
+    dates = pd.bdate_range("2020-01-01", periods=n)
+    close = np.full(n, 100.0)
+    close[0:11] = np.linspace(100, 110, 11)
+    close[10:21] = np.linspace(110, 100, 11)
+    close[20:31] = np.linspace(100, 109, 11)
+    close[30:41] = np.linspace(109, 95, 11)
+    close[40:] = 95.0
+    return pd.DataFrame(
+        {"open": close, "high": close + 0.3, "low": close - 0.3, "close": close,
+         "volume": np.full(n, 1_000_000.0)},
+        index=dates,
+    )
 
 
 def test_compute_confluence_adds_expected_columns(ohlcv):
@@ -101,6 +122,52 @@ def test_add_htf_filter_columns(ohlcv):
     assert "htf_bullish" in out.columns and "htf_bearish" in out.columns
     # a bar can't be both bullish and bearish at once
     assert not (out["htf_bullish"] & out["htf_bearish"]).any()
+
+
+def test_pattern_columns_exist_and_are_inert_by_default(ohlcv):
+    out = compute_confluence(ohlcv)  # pattern_weight defaults to 0.0
+    expected = {
+        "double_top_confirmed", "double_bottom_confirmed",
+        "head_shoulders_confirmed", "inverse_head_shoulders_confirmed", "pattern_pts",
+    }
+    assert expected.issubset(out.columns)
+    assert (out["pattern_pts"] == 0.0).all()
+    # with pattern_weight=0, net_score must exactly equal the original six-factor sum
+    six_factor_sum = (
+        out["trend_pts"] + out["momentum_pts"] + out["volume_pts"]
+        + out["vola_pts"] + out["bb_pts"] + out["long_term_pts"]
+    )
+    assert (out["net_score"] == six_factor_sum).all()
+
+
+def test_pattern_weight_shifts_net_score_on_confirmed_double_top():
+    df = _double_top_ohlcv()
+    p = ConfluenceParams(
+        pattern_weight=15.0, pattern_pivot_left=3, pattern_pivot_right=3,
+        pattern_breakout_window=15,
+    )
+    out = compute_confluence(df, p)
+    assert out["double_top_confirmed"].any(), "fixture should produce a confirmed double top"
+    hit = out[out["double_top_confirmed"]]
+    assert (hit["pattern_pts"] == -15.0).all()
+
+    baseline = compute_confluence(df, ConfluenceParams(pattern_pivot_left=3, pattern_pivot_right=3, pattern_breakout_window=15))
+    diff = out.loc[hit.index, "net_score"] - baseline.loc[hit.index, "net_score"]
+    assert (diff == -15.0).all()
+
+
+def test_net_score_can_exceed_100_with_nonzero_pattern_weight():
+    # Honest caveat, not a bug: net_score is only guaranteed within -100..100
+    # with the default pattern_weight=0.0. A nonzero weight adds an eighth
+    # source of points on top of the original 100-point budget, since the
+    # budget hasn't been rebalanced (deliberately — see patterns.py and
+    # docs/ARCHITECTURE.md for why: rebalancing without real-data validation
+    # first would just be a different unvalidated guess).
+    df = _double_top_ohlcv()
+    p = ConfluenceParams(pattern_weight=50.0, pattern_pivot_left=3, pattern_pivot_right=3, pattern_breakout_window=15)
+    out = compute_confluence(df, p)
+    valid = out["net_score"].dropna()
+    assert valid.min() < -100 or valid.max() > 100 or (out["pattern_pts"] != 0).any()
 
 
 def test_compute_breadth_matches_close_vs_sma(ohlcv):

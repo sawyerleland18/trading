@@ -344,6 +344,55 @@ one is a genuine but modest risk-management refinement — worth having on,
 not a result that changes the overall verdict about whether the system is
 profitable yet.
 
+## Update 5 (2026-08-12): chart patterns — implemented, tested, does not earn a default
+
+New optional Factor 7: Double Top/Bottom and Head-and-Shoulders/Inverse,
+detected via pivot ("fractal") points collapsed into a zigzag, matched
+against geometric tolerance rules, confirmed only on an actual neckline
+breakout (see `python/confluence/patterns.py` and the new Chart Patterns
+section in `docs/ARCHITECTURE.md` for the full methodology). Unlike every
+other factor here, chart patterns don't have a strong academic evidence
+base — the closest is Lo, Mamaysky & Wang (2000), which is why the factor
+shipped with `pattern_weight` defaulting to 0.0 (inert) rather than
+guessing at a weight and rebalancing the other six factors' point budget
+before any evidence existed either way.
+
+**Isolated effect (no other filters), watchlist aggregate:**
+
+| pattern_weight | Median CAGR % | Median Sharpe | % Profitable |
+|---|---|---|---|
+| 0 (baseline) | 0.369 | 0.213 | 80% |
+| 10 | 0.367 | 0.211 | 80% |
+| 20 | 0.346 | 0.197 | 70% |
+| 30 | 0.338 | 0.193 | 70% |
+
+Monotonically worse as weight increases — a real, if modest, negative
+signal, milder than the chop filter's failure but pointing the same
+direction: this specific implementation doesn't add edge on its own.
+
+**Combined with the validated regime+breadth+strength-sizing stack:**
+median CAGR/Sharpe *improved slightly* (0.386%→0.447%, 0.290→0.323 at
+weight=30), which could look like a reason to turn it on — except the
+per-ticker breakdown tells a different story. At weight=30: SPY unchanged,
+QQQ +0.1%, AAPL +0.1%, GOOGL/META/AMD/AMZN/TSLA/MSFT's CAGR unchanged, but
+**NVDA got worse** (CAGR 0.1%→0.0%, win rate 42%→37%) and **MSFT's drawdown
+got worse** (-4.9%→-5.7%). Trade count was identical (155) across every
+weight tested — patterns weren't changing which trades fired, only nudging
+position size/exit timing slightly. A median improvement built from two
+small positive nudges, six unchanged tickers, and one or two small negative
+nudges is not a broad-based effect — it's noise-level, the same
+broad-vs-concentrated check that caught the chop filter being fake-good.
+
+**Consequence:** `pattern_weight` / `patternWeight` stay at **0.0 in both
+implementations** — implemented, tested, and available for further
+research (different tolerance/pivot parameters, the remaining patterns
+from the Lo-Mamaysky-Wang set), but not turned on. This is a clean example
+of the validation process working as intended: a feature that sounded
+reasonable, got built carefully, and honestly didn't clear the bar — same
+outcome as the chop filter, arrived at the same way, and worth trusting
+precisely because it isn't every feature that gets built here surviving
+contact with real data.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:
