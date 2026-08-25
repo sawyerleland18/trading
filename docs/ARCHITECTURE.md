@@ -134,19 +134,31 @@ dashboard table and signal button.
 
 ### Alert payloads (Pine-only)
 
-Every `alert()` call (entries, exits-via-score-fade, and the candle popup
-above) sends a JSON payload, not free text, built by `f_entryAlertJson()`
-and `f_scoreAlertJson()` — meant to be parsed directly by a webhook receiver
+Every `alert()` call (entries and the candle popup above) sends a JSON
+payload, not free text, built by `f_entryAlertJson()` and
+`f_scoreAlertJson()` — meant to be parsed directly by a webhook receiver
 (3Commas, Alertatron, a custom bot) rather than regexed out of a sentence.
 Entry payloads: `{"strategy","ticker","event":"entry","action":"buy"|"sell","price","stop","target","qty","score","time"}`.
 Score-popup payloads: `{"strategy","ticker","event":"score_alert","direction":"bullish"|"bearish","score","threshold","price","time"}`.
 The on-chart labels are unaffected — still human-readable text; only the
-`alert()` payload format changed. Note this only covers signal-generation
-events (entries, popups) — stop-loss/take-profit *fills* don't have an
-alert payload yet, since firing precisely on an order fill (as opposed to
-when the script evaluates a signal) needs `alert_message` on
-`strategy.exit()` rather than a plain `alert()` call; a natural follow-up
-if full automation coverage (including exits) is needed later.
+`alert()`/`alert_message` payload format is JSON.
+
+**Exit fills** (stop-loss, take-profit, and score-fade closes) are covered
+too, via `f_exitAlertJson()`, but through a different mechanism than
+entries: `alert()` fires the instant the script *evaluates* a condition,
+which is fine for entries (the signal bar), but a stop or target can fill
+mid-trade on a bar where no script logic re-runs a new decision. Pine's
+`strategy.exit()` and `strategy.close()` instead take `alert_profit` /
+`alert_loss` / `alert_message` parameters that TradingView fires
+automatically and precisely on the bar the corresponding order actually
+fills — so a stop-out or target hit is reported exactly when it happened,
+not approximated. Exit payloads:
+`{"strategy","ticker","event":"exit","action":"buy"|"sell","reason":"take_profit"|"stop_loss"|"score_fade","price","qty","score","time"}`
+— `action` is the side a bot should execute to close the position (selling
+closes a long, buying-to-cover closes a short), matching the convention
+`action` already uses in entry payloads. With this, every event a webhook
+bot needs to track a position end-to-end (entry, and every way the
+position can subsequently close) has a JSON alert.
 
 ### Multi-timeframe filter
 

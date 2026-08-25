@@ -510,6 +510,17 @@ f_scoreAlertJson(direction, score, threshold, price) =>
     fields = ',"event":"score_alert"' + ',"direction":"' + direction + '"' + ',"score":' + str.tostring(score, "#.0") + ',"threshold":' + str.tostring(threshold) + ',"price":' + str.tostring(price, format.mintick) + ',"time":' + str.tostring(time)
     header + fields + '}'
 
+// Exit-fill payloads use `action` the same way entry payloads do - the side
+// a bot should actually execute to close the position (selling closes a
+// long, buying-to-cover closes a short) - plus a `reason` naming which of
+// the three ways a position closes actually happened. Built the same way as
+// f_entryAlertJson() above, just with a reason field instead of stop/target
+// (the position is flat after this fires, so there's nothing left to hold).
+f_exitAlertJson(action, reason, price, qty, score) =>
+    header = '{"strategy":"confluence_signal_system","ticker":"' + syminfo.ticker + '"'
+    fields = ',"event":"exit"' + ',"action":"' + action + '"' + ',"reason":"' + reason + '"' + ',"price":' + str.tostring(price, format.mintick) + ',"qty":' + str.tostring(qty, "#.########") + ',"score":' + str.tostring(score, "#.0") + ',"time":' + str.tostring(time)
+    header + fields + '}'
+
 if enableLong and longCondition and strategy.position_size <= 0
     if strategy.position_size < 0
         strategy.close("Short", comment = "Flip to Long")
@@ -560,15 +571,27 @@ if showPopupAlert and popupSellEvent and barstate.isconfirmed
 alertcondition(popupBuyEvent,  title = "CSS Score Crossed Bullish Threshold", message = "Confluence Signal System: net score turned strongly BULLISH on {{ticker}} at {{close}}")
 alertcondition(popupSellEvent, title = "CSS Score Crossed Bearish Threshold", message = "Confluence Signal System: net score turned strongly BEARISH on {{ticker}} at {{close}}")
 
+// alert_profit/alert_loss fire automatically on the bar the corresponding
+// order actually fills (limit = take-profit, stop = stop-loss) - not on
+// whatever bar the script happens to evaluate on - so a webhook bot
+// downstream learns about a stop-out or a target hit exactly when it
+// really happened, closing the gap noted in docs/ARCHITECTURE.md: entries
+// and the score-fade close already alerted, stop/target fills didn't.
 if strategy.position_size > 0
-    strategy.exit("Long Exit", "Long", stop = longSL, limit = longTP)
+    strategy.exit("Long Exit", "Long", stop = longSL, limit = longTP,
+         alert_profit = f_exitAlertJson("sell", "take_profit", longTP, math.abs(strategy.position_size), netScore),
+         alert_loss = f_exitAlertJson("sell", "stop_loss", longSL, math.abs(strategy.position_size), netScore))
     if netScore < exitLongScore and barstate.isconfirmed
-        strategy.close("Long", comment = "Score Fade")
+        strategy.close("Long", comment = "Score Fade",
+             alert_message = f_exitAlertJson("sell", "score_fade", close, math.abs(strategy.position_size), netScore))
 
 if strategy.position_size < 0
-    strategy.exit("Short Exit", "Short", stop = shortSL, limit = shortTP)
+    strategy.exit("Short Exit", "Short", stop = shortSL, limit = shortTP,
+         alert_profit = f_exitAlertJson("buy", "take_profit", shortTP, math.abs(strategy.position_size), netScore),
+         alert_loss = f_exitAlertJson("buy", "stop_loss", shortSL, math.abs(strategy.position_size), netScore))
     if netScore > exitShortScore and barstate.isconfirmed
-        strategy.close("Short", comment = "Score Fade")
+        strategy.close("Short", comment = "Score Fade",
+             alert_message = f_exitAlertJson("buy", "score_fade", close, math.abs(strategy.position_size), netScore))
 
 // Plotted SL/TP series: only visible while a position is actually open -
 // derived from position_size rather than clearing longSL/shortSL directly,
