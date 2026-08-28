@@ -393,6 +393,107 @@ outcome as the chop filter, arrived at the same way, and worth trusting
 precisely because it isn't every feature that gets built here surviving
 contact with real data.
 
+## Update 6 (2026-08-28): wider validation — same tickers, much more history
+
+Every prior update above tested the same 10-ticker watchlist starting
+2015-01-01 (~10-11 years). The goal here was to widen that: check whether
+the regime+breadth+strength-sizing stack's improvement over baseline (the
+combination all three default ON in both implementations) is specific to
+that one mostly-bullish decade, or holds up further back.
+
+**Scope caveat, stated honestly up front:** this environment had no
+`TIINGO_API_KEY` and Yahoo Finance is network-blocked here, so the *ticker*
+universe could not be widened this round — still the same 10 names. What
+*could* be widened for free was the *time* dimension: each ticker's data
+was already cached going back to its earliest available date (Tiingo's
+"full history" — as far back as 1990 for AAPL/AMD/MSFT), so re-running with
+`start=1990-01-01` uses each ticker's maximum available history instead of
+being clipped to 2015+, at no extra download cost. That adds the dot-com
+bubble and bust, the 2008 financial crisis, and the 2020/2022 shocks were
+already partly covered — a much harsher, more varied sample than one bull
+decade. Widening the ticker universe itself remains a good follow-up
+whenever API access is available.
+
+**Cross-sectional aggregate, full available history per ticker:**
+
+| | Baseline (no filters) | Regime+Breadth+Strength-Sizing stack |
+|---|---|---|
+| Median CAGR | 0.10% | 0.25% |
+| Median Sharpe | 0.066 | 0.215 |
+| Median Max Drawdown | -9.24% | -4.09% |
+| Median Win Rate | 32.8% | 41.0% |
+| % Tickers Profitable | 60% | 70% |
+| Total Trades (all 10 tickers) | 818 | 378 |
+
+Directionally identical to every prior finding for this stack, now proven
+over up to 36 years instead of ~10 — the absolute CAGR/Sharpe numbers are
+lower than the 2015+-only figures reported in Update 3/4 (harsher decades
+drag down the baseline too), but the *relative* improvement from the filter
+stack is intact and, if anything, larger on this longer window.
+
+**Per-ticker breakdown** (baseline → stack), history depth in parentheses:
+
+| Ticker | History | CAGR | Max DD | Win Rate | Trades |
+|---|---|---|---|---|---|
+| SPY | 33y (1993) | 0.30%→0.33% | -8.5%→-3.2% | 36%→42% | 89→53 |
+| QQQ | 27y (1999) | 0.50%→0.52% | -8.7%→-2.6% | 40%→47% | 88→47 |
+| AAPL | 36y (1990) | 0.31%→0.38% | -9.8%→-3.9% | 35%→46% | 102→52 |
+| MSFT | 36y (1990) | -0.11%→-0.06% | -14.2%→-7.6% | 32%→33% | 113→52 |
+| NVDA | 27y (1999) | -0.24%→-0.07% | -14.0%→-7.3% | 29%→31% | 76→35 |
+| AMZN | 29y (1997) | 0.30%→0.25% | -5.5%→-3.2% | 36%→40% | 88→42 |
+| GOOGL | 22y (2004) | 0.06%→0.24% | -11.2%→-5.2% | 33%→40% | 63→30 |
+| META | 14y (2012) | 0.14%→0.47% | -5.7%→-2.6% | 31%→47% | 36→17 |
+| TSLA | 16y (2010) | -0.30%→-0.43% | -7.6%→-7.3% | 28%→11% | 61→19 |
+| AMD | 36y (1990) | -0.02%→0.18% | -12.8%→-4.3% | 32%→42% | 102→31 |
+
+Max drawdown improved at **all 10/10 tickers** and win rate improved at
+**9/10** (TSLA is the exception, and on a small sample — 19 trades). CAGR
+improved at 8/10; AMZN dipped slightly (0.30%→0.25%) and TSLA got
+meaningfully worse (-0.30%→-0.43%) alongside its win-rate collapse
+(28%→11%). This is the same broad-vs-concentrated check used throughout
+this document, applied over a much longer window, and it reaches the same
+verdict as before: broad-based, not a fluke of the specific tickers or
+decade — reinforcing, not just repeating, the original decision to default
+`useRegimeFilter`/`useBreadthFilter`/`useStrengthSizing` ON. TSLA
+specifically not benefiting (or actively doing worse) under this stack is
+worth remembering if trading that name individually — its extreme
+volatility and gap risk seem to interact badly with the fixed ATR-based
+stop/target here, though 19 trades is too few to treat that as settled.
+
+**8-fold walk-forward on SPY, full history (1993-2026)** — testing
+parameter *stability* over time, not just the fixed filter stack above.
+Grid: `buy_threshold ∈ {30,40,50}`, `sell_threshold ∈ {-50,-40,-30}`,
+`atr_mult_sl ∈ {1.0,1.5,2.0}`, `atr_mult_tp ∈ {2.0,3.0,4.0}` — 36 combos,
+regime+breadth+strength-sizing on throughout.
+
+- `buy_threshold=30` / `sell_threshold=-50` was the in-sample winner in
+  **every single one of the 7 folds**, no exceptions — a far more
+  consistent signal than anything else tested in this project so far, and
+  notably more asymmetric/looser than the current live defaults
+  (`buyThreshold=40`, `sellThreshold=-40`).
+- `atr_mult_sl`/`atr_mult_tp` were not stable — they drifted from a tight
+  2.0/2.0 in the earliest fold (1993-97 in-sample) toward a looser 1.0/4.0
+  in the most recent two folds (2018+ in-sample), suggesting the
+  best stop/target ratio may not be a single constant across market eras.
+- Out-of-sample Sharpe was positive in 5 of the 7 folds (the two negative
+  folds cover transitions out of the dot-com bust into 2001-05 and out of
+  the 2008 crisis into 2009-14 — periods where whatever worked in-sample
+  during a crash didn't transfer to the recovery that followed).
+- Trade counts per out-of-sample fold were small (2-9), which makes any
+  single fold's Sharpe/CAGR noisy — a real limitation of slicing 33 years
+  into 8 pieces for a strategy that doesn't trade often.
+
+**Consequence:** no defaults changed in either implementation from this
+update. The cross-sectional result *reinforces* the existing
+regime+breadth+strength-sizing defaults with a much larger sample; it
+doesn't call for any code change. The walk-forward's consistent
+`buy_threshold=30`/`sell_threshold=-50` finding is a legitimate lead worth
+testing on its own — the same way every other change in this document got
+tested in isolation before touching a default — but doing that properly
+needs a dedicated run (isolated on this parameter, across the same
+broad-vs-concentrated per-ticker check used everywhere else here), not a
+same-day change off a single grid search on one ticker.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:
