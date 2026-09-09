@@ -467,10 +467,7 @@ Grid: `buy_threshold ∈ {30,40,50}`, `sell_threshold ∈ {-50,-40,-30}`,
 regime+breadth+strength-sizing on throughout.
 
 - `buy_threshold=30` / `sell_threshold=-50` was the in-sample winner in
-  **every single one of the 7 folds**, no exceptions — a far more
-  consistent signal than anything else tested in this project so far, and
-  notably more asymmetric/looser than the current live defaults
-  (`buyThreshold=40`, `sellThreshold=-40`).
+  every single one of the 7 folds, no exceptions.
 - `atr_mult_sl`/`atr_mult_tp` were not stable — they drifted from a tight
   2.0/2.0 in the earliest fold (1993-97 in-sample) toward a looser 1.0/4.0
   in the most recent two folds (2018+ in-sample), suggesting the
@@ -483,16 +480,37 @@ regime+breadth+strength-sizing on throughout.
   single fold's Sharpe/CAGR noisy — a real limitation of slicing 33 years
   into 8 pieces for a strategy that doesn't trade often.
 
+**Correction (2026-09-09): the buy_threshold=30/sell_threshold=-50 "finding"
+above was wrong — a testing artifact, not a real signal.** Both
+implementations default to `trigger_mode = "ema_cross_confluence"`
+(`triggerMode` in Pine), under which entries fire off an EMA crossover
+confirmed by `net_score >= ema_confirm_score` — `buy_threshold`/
+`sell_threshold` are computed (they feed the dashboard's regime label) but
+are **never read by the entry logic** in this mode; they only drive entries
+under the alternate `trigger_mode = "score_threshold_cross"`, which nothing
+in this document has ever defaulted to. Confirmed directly: re-running SPY
+with `buy_threshold=40/sell_threshold=-40` (the live default) vs.
+`buy_threshold=30/sell_threshold=-50` under `ema_cross_confluence` produces
+byte-identical results — same 53 trades, same Sharpe to the last decimal.
+The walk-forward grid search still had to report *a* "winner" among 9
+numerically-tied buy/sell-threshold combinations every fold, and it kept
+whichever one `itertools.product` happened to try first — which is exactly
+`(30, -50)`, the first values in each grid list. That's tie-breaking order,
+not evidence. (The ATR-multiplier-instability and out-of-sample-Sharpe
+findings above are unaffected — `atr_mult_sl`/`atr_mult_tp` do affect
+stop/target placement under every trigger mode, and did produce genuinely
+different results per combo.)
+
 **Consequence:** no defaults changed in either implementation from this
-update. The cross-sectional result *reinforces* the existing
-regime+breadth+strength-sizing defaults with a much larger sample; it
-doesn't call for any code change. The walk-forward's consistent
-`buy_threshold=30`/`sell_threshold=-50` finding is a legitimate lead worth
-testing on its own — the same way every other change in this document got
-tested in isolation before touching a default — but doing that properly
-needs a dedicated run (isolated on this parameter, across the same
-broad-vs-concentrated per-ticker check used everywhere else here), not a
-same-day change off a single grid search on one ticker.
+update, and the previously-proposed follow-up ("test buy=30/sell=-50
+properly") is retracted — there is nothing there to test. The
+cross-sectional full-history result above is unaffected by this correction
+(it only ever toggled the three filter flags, never `buy_threshold`/
+`sell_threshold`) and still reinforces the existing
+regime+breadth+strength-sizing defaults with a much larger sample. If
+threshold tuning is wanted later, it would need `trigger_mode` switched to
+`score_threshold_cross` first — genuinely untested territory, not something
+this document has validated either way.
 
 ## Honest assessment (original, before the regime filter — kept for the record)
 
