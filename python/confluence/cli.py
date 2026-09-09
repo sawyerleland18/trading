@@ -5,6 +5,7 @@ Examples
     python -m confluence.cli backtest --ticker AAPL --start 2015-01-01
     python -m confluence.cli scan --watchlist config/watchlist.txt --start 2018-01-01
     python -m confluence.cli optimize --ticker SPY --start 2015-01-01
+    python -m confluence.cli portfolio --watchlist config/watchlist.txt --start 2015-01-01
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from .data import load_ohlcv, load_watchlist
 from .metrics import summarize
 from .multi_asset import aggregate_stats, run_watchlist
 from .optimize import walk_forward
+from .portfolio import run_portfolio_backtest
 from .signals import ConfluenceParams, compute_breadth
 
 
@@ -99,6 +101,45 @@ def cmd_optimize(args: argparse.Namespace) -> None:
     print(folds)
     print("\nFinal recommended params (from last fold's best in-sample fit):")
     print(best_params)
+
+
+def cmd_portfolio(args: argparse.Namespace) -> None:
+    tickers = load_watchlist(args.watchlist)
+    price_data = {}
+    for t in tickers:
+        try:
+            price_data[t] = load_ohlcv(t, start=args.start, end=args.end, force_refresh=args.refresh)
+        except Exception as exc:  # noqa: BLE001 - one bad symbol shouldn't kill the run
+            print(f"[skip] {t}: {exc}")
+    if not price_data:
+        print("No data loaded.")
+        return
+
+    params = ConfluenceParams(pattern_weight=args.pattern_weight)
+    breadth = _load_breadth(args)
+    equity, trades_df = run_portfolio_backtest(
+        price_data, params=params, initial_capital=args.capital,
+        use_regime_filter=args.regime_filter, use_chop_filter=args.chop_filter,
+        use_breadth_filter=args.breadth_filter, breadth=breadth,
+        use_strength_sizing=args.strength_sizing,
+        correlation_aware=args.correlation_aware, corr_lookback=args.corr_lookback,
+        corr_penalty_floor=args.corr_penalty_floor, max_concurrent_positions=args.max_positions,
+        slippage_pct=args.slippage,
+    )
+    summary = summarize(equity, trades_df["pnl_pct"] if len(trades_df) else pd.Series(dtype=float))
+    _print_summary(f"Portfolio Backtest ({len(price_data)} tickers, shared capital)", summary)
+
+    if len(trades_df):
+        print("\n=== Per-ticker contribution ===")
+        by_ticker = trades_df.groupby("ticker").agg(
+            trades=("pnl", "count"), total_pnl=("pnl", "sum"), win_rate=("pnl", lambda s: (s > 0).mean() * 100),
+        )
+        pd.set_option("display.width", 160)
+        print(by_ticker.sort_values("total_pnl", ascending=False))
+
+    if args.out:
+        trades_df.to_csv(args.out, index=False)
+        print(f"\nSaved {len(trades_df)} trades to {args.out}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -205,6 +246,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     opt.add_argument("--refresh", action="store_true")
     opt.set_defaults(func=cmd_optimize)
+
+    pf = sub.add_parser("portfolio", help="Backtest a whole watchlist against ONE shared cash account")
+    pf.add_argument("--watchlist", required=True, help="Path to a newline-separated ticker file")
+    pf.add_argument("--start", default="2015-01-01")
+    pf.add_argument("--end", default=None)
+    pf.add_argument("--capital", type=float, default=100_000.0, help="Total shared account capital (default 100,000)")
+    pf.add_argument(
+        "--regime-filter", action="store_true",
+        help="Veto counter-trend entries against the Long-Term Regime factor (SMA200 + 12-1mo momentum)",
+    )
+    pf.add_argument(
+        "--chop-filter", action="store_true",
+        help="Veto any new entry while ADX says the market isn't trending",
+    )
+    pf.add_argument(
+        "--slippage", type=float, default=0.0,
+        help="Adverse slippage %% applied to entries, stop-loss exits, and score-fade exits (default 0)",
+    )
+    pf.add_argument(
+        "--breadth-filter", action="store_true",
+        help="Veto entries against a market-breadth reference ticker's own 200-SMA trend (default SPY)",
+    )
+    pf.add_argument("--breadth-ticker", default="SPY", help="Market-breadth reference ticker (default SPY)")
+    pf.add_argument(
+        "--strength-sizing", action="store_true",
+        help="Scale risked $ by entry conviction (|net_score|/100) instead of a flat amount every trade",
+    )
+    pf.add_argument(
+        "--pattern-weight", type=float, default=0.0,
+        help="Points contributed by confirmed chart patterns (Double Top/Bottom, Head-and-Shoulders/Inverse); 0 = inert (default)",
+    )
+    pf.add_argument(
+        "--correlation-aware", action="store_true",
+        help="Shrink a new position's risk if it's correlated with positions already open (see portfolio.py)",
+    )
+    pf.add_argument("--corr-lookback", type=int, default=60, help="Trailing days used for the correlation estimate (default 60)")
+    pf.add_argument(
+        "--corr-penalty-floor", type=float, default=0.3,
+        help="Never shrink a correlated position's risk below this fraction of its uncorrelated size (default 0.3)",
+    )
+    pf.add_argument(
+        "--max-positions", type=int, default=None,
+        help="Cap on simultaneous open positions, independent of capital (default: capital is the only cap)",
+    )
+    pf.add_argument("--refresh", action="store_true", help="Bypass cache and re-download")
+    pf.add_argument("--out", default=None, help="CSV path to save the trade log")
+    pf.set_defaults(func=cmd_portfolio)
 
     return parser
 

@@ -329,6 +329,82 @@ entry, stop-loss, and take-profit prices, and the current trade's stop/target
 levels are plotted as live horizontal lines on the candles (and echoed in
 the dashboard table) for as long as the position stays open.
 
+### Portfolio-level backtest (Python-only)
+
+Every backtest above (single-ticker, watchlist scan, walk-forward) tests
+one ticker against its own dedicated capital — useful for asking "does
+this rule help this ticker", but not how anyone actually trades a
+watchlist: in a real account, capital is shared and finite, and holding
+several correlated names at once isn't really several independent bets.
+`python/confluence/portfolio.py` (`run_portfolio_backtest()`, CLI:
+`confluence.cli portfolio`) runs every ticker in a watchlist against ONE
+shared cash account instead.
+
+**No margin/leverage is modeled** — a position reserves its *full notional*
+out of cash as collateral (cash-secured), released back (adjusted by P&L)
+when it closes. This surfaces a real, important consequence of the existing
+ATR-based sizing formula that per-ticker testing never exposes: because
+`qty = risk_dollars / (ATR * atr_mult_sl)` and `notional = qty * price`,
+the notional-to-risk ratio is `price / (ATR * atr_mult_sl)` — often
+**~30-50x** for these tickers at the default `atr_mult_sl=1.5` (a tight
+stop relative to price means a small dollar-risk budget still buys a large
+share count). At the default `risk_per_trade_pct=1%`, a single full-size
+position can reserve **roughly half the account's total equity**, and —
+because the ratio is proportional, not absolute — this holds regardless of
+how large the account is; a bigger account doesn't "solve" it. Practical
+upshot: under this cash-secured model, the current defaults can barely
+support 2-3 simultaneous full-size positions before running out of
+buying power. Anyone running this live across several tickers at once
+should size `risk_per_trade_pct` down from the single-ticker default with
+that in mind — this module doesn't do it automatically, since the "right"
+number of concurrent positions is a preference, not something to guess a
+default for.
+
+Two opt-in refinements on top of the shared-capital mechanic:
+
+- **`correlation_aware=True`**: a new position's risk dollars are shrunk by
+  `max(corr_penalty_floor, 1 - avg_abs_corr_with_open_positions)`, where the
+  correlation is trailing daily returns (`corr_lookback` days, default 60)
+  computed only on data strictly before the entry date (no lookahead). A
+  simple, explainable heuristic — not a mean-variance optimizer — in
+  keeping with every other rule in this system. Two correlated positions
+  aren't two independent bets; this trims size on the second one rather
+  than vetoing it outright (`corr_penalty_floor`, default 0.3, keeps it
+  tradeable at reduced size).
+- **`max_concurrent_positions`**: an optional hard cap on simultaneous
+  positions, independent of capital.
+
+**Validated (2026-09-09), full available history per ticker, same
+10-ticker watchlist, regime+breadth+strength-sizing stack on:**
+
+| | Naive shared capital | + correlation-aware | + correlation-aware, max 5 |
+|---|---|---|---|
+| CAGR | 1.31% | 0.97% | 0.95% |
+| Sharpe | 0.369 | 0.369 | 0.365 |
+| Max Drawdown | -8.88% | -7.19% | -7.19% |
+
+Correlation-aware sizing is a genuine risk/return trade-off, not a free
+improvement: it trims both the upside and the drawdown by a similar
+proportion, netting out to essentially the same Sharpe with a smoother
+ride. The extra hard cap of 5 concurrent positions added almost nothing on
+top — correlation-aware sizing was already doing most of that work.
+Compared to the per-ticker independent tests (Update 6 in
+`docs/BACKTEST_RESULTS.md`, same tickers/history/filters, median CAGR
+0.25%/Sharpe 0.215/max DD -4.09%), the shared portfolio shows a *higher*
+CAGR and Sharpe (diversification benefit from compounding across
+imperfectly-correlated names) but also a *larger* max drawdown — holding
+several positions at once means more capital-at-risk simultaneously when
+the broad market (not any single name) sells off, which per-ticker testing
+with each name's own isolated $10k never shows. See
+`docs/BACKTEST_RESULTS.md` Update 7 for the full write-up and per-ticker
+contribution breakdown.
+
+No Pine equivalent: Pine strategies run against one chart symbol at a
+time — simulating a real multi-symbol shared-capital account inside
+TradingView would need substantial `request.security`-based
+cross-referencing infrastructure this script doesn't have, so this stays
+Python-only research tooling, same as walk-forward optimization above it.
+
 ## Repository layout
 
 ```

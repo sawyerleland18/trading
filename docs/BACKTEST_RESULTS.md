@@ -512,6 +512,95 @@ threshold tuning is wanted later, it would need `trigger_mode` switched to
 `score_threshold_cross` first — genuinely untested territory, not something
 this document has validated either way.
 
+## Update 7 (2026-09-09): portfolio-level backtest — shared capital, correlation-aware sizing
+
+Everything above tests one ticker against its own dedicated capital. New
+`python/confluence/portfolio.py` (`run_portfolio_backtest()`, CLI:
+`confluence.cli portfolio`) instead runs the whole watchlist against ONE
+shared cash account — no margin/leverage modeled, a position reserves its
+full notional as collateral (cash-secured) and releases it back, adjusted
+by P&L, on close. See the new "Portfolio-level backtest" section in
+`docs/ARCHITECTURE.md` for the full mechanism and code.
+
+**Important finding, not really about the portfolio engine itself:** the
+existing ATR-based sizing formula (`qty = risk_dollars / (ATR *
+atr_mult_sl)`) produces a notional-to-risk ratio of `price / (ATR *
+atr_mult_sl)` — roughly 30-50x for these tickers at the default
+`atr_mult_sl=1.5`. At the default `risk_per_trade_pct=1%`, that means a
+**single full-size position can reserve roughly half the account's total
+equity** — and because that ratio is proportional to equity, not an
+absolute dollar amount, a bigger starting capital doesn't fix it (this
+was actually first discovered as a test bug — a "use $10M so the capital
+constraint can't bind" test assumption turned out to be impossible by
+construction, which is exactly what surfaced this). Practical upshot:
+under a no-margin/cash-secured account, current defaults can barely
+support 2-3 full-size simultaneous positions before running out of buying
+power. This isn't a bug — it's an honest, previously-invisible consequence
+of tight ATR stops that only shows up once capital is actually shared
+across positions instead of each ticker getting its own dedicated pot.
+
+**Validated, full available history per ticker (same 10-ticker watchlist,
+1990/whenever-each-IPO'd through 2026), regime+breadth+strength-sizing
+stack on throughout, $100,000 starting capital:**
+
+| | Naive shared capital | + correlation-aware (60d, floor 0.3) | + correlation-aware, max 5 concurrent |
+|---|---|---|---|
+| CAGR | 1.31% | 0.97% | 0.95% |
+| Sharpe | 0.369 | 0.369 | 0.365 |
+| Max Drawdown | -8.88% | -7.19% | -7.19% |
+| Trades | 370 | 378 | 370 |
+| Win Rate | 39.5% | 39.2% | 39.5% |
+
+**Per-ticker contribution, naive shared capital** (total $ P&L, ranked):
+QQQ +$18,725, AAPL +$14,995, SPY +$13,197, AMZN +$10,562, GOOGL +$10,476,
+META +$9,090, AMD +$8,286, MSFT -$1,912, NVDA -$1,987, TSLA -$9,768 — the
+same broad pattern as every per-ticker breakdown in this document: TSLA is
+the consistent laggard, the mega-cap/index names carry the book.
+
+**Correlation-aware sizing is a genuine trade-off, not a free
+improvement:** it trims both CAGR and max drawdown by a similar
+proportion (CAGR 1.31%→0.97%, a ~26% relative cut; max DD -8.88%→-7.19%,
+a ~19% relative improvement), netting out to essentially the *same*
+Sharpe (0.369→0.369) — a smoother ride at a real cost to return, not a
+strict upgrade. Adding a hard cap of 5 concurrent positions on top of
+correlation-aware sizing changed almost nothing (0.97%→0.95% CAGR, same
+Sharpe, same max DD) — correlation-aware sizing was already doing nearly
+all of that concentration-limiting work on its own.
+
+**Compared to the per-ticker independent tests** (Update 6, same
+tickers/history/filter stack, median CAGR 0.25% / Sharpe 0.215 / max DD
+-4.09%): the shared portfolio shows a noticeably *higher* CAGR and Sharpe
+— a real diversification benefit from compounding gains across several
+imperfectly-correlated names in one account instead of ten separate
+isolated $10k pots — but also a meaningfully *larger* max drawdown
+(-8.88% vs the per-ticker median -4.09%). That's not a contradiction: a
+shared account can have several positions open simultaneously, so when
+the *broad* market sells off (not any single name), more of the account's
+capital is exposed at once than any single-ticker test — testing each
+ticker in isolation with its own dedicated capital structurally cannot
+show this, since it never lets more than one position exist at a time.
+This is arguably the single most useful thing this update adds: a risk
+picture the rest of this document, by construction, could not surface.
+
+**Consequence:** no defaults changed in either implementation.
+`correlation_aware` defaults to `False` in `run_portfolio_backtest()` —
+available and tested, not turned on, consistent with every other
+opt-in refinement in this project; whether the smoother-but-lower-return
+trade-off is worth it is a preference call, not something with an
+objectively "right" answer to default to. The sizing-ratio finding above
+doesn't change any code either, but is worth remembering before running
+several tickers live on shared capital with the out-of-the-box
+`risk_per_trade_pct`.
+
+Tests: `python/tests/test_portfolio.py` (7 tests) — single-ticker
+equivalence with `backtest.run_backtest()` (sizing off shared "total
+account equity" must reduce to sizing off "cash when flat" in the trivial
+one-ticker case), the shared-capital constraint actually binding,
+`max_concurrent_positions` never overlapping two open positions, the
+correlation-aware shrink landing at the expected `corr_penalty_floor`
+ratio, and the trailing-correlation helper provably using no future data.
+`python3 -m pytest -q` → 56 passed.
+
 ## Honest assessment (original, before the regime filter — kept for the record)
 
 **This does not show tradeable edge on this evidence.** Direct verdict, not hedged:
